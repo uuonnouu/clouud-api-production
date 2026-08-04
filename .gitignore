@@ -82,3 +82,7 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
+# Catch-all env safety net (explicit files above stay covered too)
+.env
+**/.env
+!**/.env.example
