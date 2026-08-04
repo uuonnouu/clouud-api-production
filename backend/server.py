@@ -3,18 +3,16 @@ import uuid
 import hashlib
 import json
 import time
-import hmac
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
-from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="CLOUUD Artifact Engine API")
+app = FastAPI(title="CLOUUD Local Proof Pipeline API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,181 +24,160 @@ app.add_middleware(
 
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "clouud_db")
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
-class CompressRequest(BaseModel):
-    event_type: str
-    data: dict
+# Models
+class EventRequest(BaseModel):
+    event_type: str = "generic_event"
+    payload: dict
 
-class TokenizeRequest(BaseModel):
-    artifact_id: str
-    token_type: str = "DATA" # DATA, REASONING, KNOWLEDGE
+class VerifyRequest(BaseModel):
+    event_id: str
+    proof: dict
 
-class TokenVerifyRequest(BaseModel):
-    token_id: str
-    proof_hash: str
+class TamperRequest(BaseModel):
+    event_id: str
+    tampered_payload: dict
 
 def get_sha256(data: str) -> str:
     return hashlib.sha256(data.encode('utf-8')).hexdigest()
 
-def generate_zk_snark(merkle_root: str, secret_salt: str):
-    pi_a = ["0x" + hmac.new(secret_salt.encode(), b"pi_a_0" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64],
-            "0x" + hmac.new(secret_salt.encode(), b"pi_a_1" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64],
-            "1"]
-    pi_b = [["0x" + hmac.new(secret_salt.encode(), b"pi_b_00" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64],
-             "0x" + hmac.new(secret_salt.encode(), b"pi_b_01" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64]],
-            ["0x" + hmac.new(secret_salt.encode(), b"pi_b_10" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64],
-             "0x" + hmac.new(secret_salt.encode(), b"pi_b_11" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64]],
-            ["1", "0"]]
-    pi_c = ["0x" + hmac.new(secret_salt.encode(), b"pi_c_0" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64],
-            "0x" + hmac.new(secret_salt.encode(), b"pi_c_1" + merkle_root.encode(), hashlib.sha256).hexdigest()[:64],
-            "1"]
-    public_signals = ["0x" + get_sha256(merkle_root)[:64]]
-    return {
-        "pi_a": pi_a,
-        "pi_b": pi_b,
-        "pi_c": pi_c,
-        "protocol": "groth16",
-        "curve": "bn128"
-    }, public_signals
+def normalize_and_encode(payload: dict) -> list:
+    """Deterministically flattens a JSON payload into an array of semantic states."""
+    states = []
+    # Sort keys to guarantee deterministic order
+    for k, v in sorted(payload.items()):
+        # In a real engine, this would be a deep structural parse
+        val_str = json.dumps(v, sort_keys=True)
+        states.append(f"STATE_TRANSITION|{k}|{val_str}")
+    if not states:
+        states = ["STATE_TRANSITION|empty|null"]
+    return states
 
-@app.post("/api/v1/compress")
-async def compress_data(req: CompressRequest):
-    artifact_id = str(uuid.uuid4())
-    payload_str = json.dumps(req.data)
-    original_size = len(payload_str)
-    
-    truncated_payload = payload_str if len(payload_str) < 2000 else payload_str[:2000] + "...[TRUNCATED]"
-
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=artifact_id,
-        system_message="You are the CLOUUD Compression Engine. Extract 4 core semantic states from this JSON. Output strictly as JSON array of strings. Do NOT output markdown formatting like ```json"
-    ).with_model("openai", "gpt-5.4-mini")
-
-    user_msg = UserMessage(text=f"Type: {req.event_type}, Data: {truncated_payload}")
-    
-    response_text = ""
-    try:
-        async for event in chat.stream_message(user_msg):
-            if isinstance(event, TextDelta):
-                response_text += event.content
-    except Exception as e:
-        print(f"LLM Error: {e}")
-        pass
-            
-    try:
-        raw_json = response_text.replace("```json", "").replace("```", "").strip()
-        states = json.loads(raw_json)
-        if not isinstance(states, list) or len(states) < 4:
-            raise ValueError("Invalid array")
-    except Exception as e:
-        mb = round(original_size / (1024 * 1024), 2)
-        states = [
-            f"Extracted semantic vectors from {mb}MB payload",
-            f"Mapped dependency graph across dimensional fields",
-            f"Discarded redundant logging overhead",
-            f"Generated mathematical hash representation"
-        ]
-    states = states[:4]
-
+def generate_merkle_chain(states: list):
+    """Generates a sequential hash chain culminating in a root commitment."""
     hashes = []
     prev_hash = ""
     for i, state in enumerate(states):
         h = get_sha256(state) if i == 0 else get_sha256(prev_hash + state)
         hashes.append(h)
         prev_hash = h
-        
-    root_hash = hashes[-1]
-    
-    secret_salt = os.environ.get("ZK_SECRET_SALT", "clouud_secure_salt_2026")
-    zk_proof, public_signals = generate_zk_snark(root_hash, secret_salt)
-    
-    compressed_artifact = {
-        "compressed_states": states,
-        "zk_proof": zk_proof,
-        "public_signals": public_signals
-    }
-    
-    compressed_size = len(json.dumps(compressed_artifact))
-    compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > compressed_size else 0.0
+    return hashes[-1], hashes
 
+@app.get("/api/v1/health")
+async def health_check():
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+# Accepting both /transactions and /events to support all user curl commands
+@app.post("/api/v1/transactions")
+@app.post("/api/v1/events")
+async def ingest_event(req: EventRequest):
+    event_id = str(uuid.uuid4())
     doc = {
-        "artifact_id": artifact_id,
+        "event_id": event_id,
         "event_type": req.event_type,
-        "original_size": original_size,
-        "compressed_size": compressed_size,
-        "compression_ratio": compression_ratio,
-        "merkle_root": root_hash,
+        "payload": req.payload,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "status": "compressed"
+        "status": "ingested",
+        "proof_blob": None
     }
-    await db.artifacts.insert_one(doc)
-
+    await db.events.insert_one(doc)
     return {
-        "artifact_id": artifact_id,
+        "transaction_id": event_id,  # Returned as transaction_id for curl compatibility
+        "event_id": event_id,
+        "status": "ingested",
+        "timestamp": doc["timestamp"]
+    }
+
+@app.post("/api/v1/proof")
+async def generate_proof(req: dict):
+    # Support both transaction_id and event_id from incoming request
+    event_id = req.get("transaction_id") or req.get("event_id")
+    ev = await db.events.find_one({"event_id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    start_time = time.time()
+
+    # 1. State Normalization & CLOUUD Encoder
+    states = normalize_and_encode(ev["payload"])
+    
+    # 2. Hash Generation & Merkle Commitment
+    root_hash, hashes = generate_merkle_chain(states)
+    
+    # 3. Compressed Proof Artifact
+    payload_str = json.dumps(ev["payload"])
+    original_size = len(payload_str)
+    
+    proof_blob = {
+        "proof_version": "CLOUUD-CORE-1.0",
+        "event_id": event_id,
+        "algorithm": "CLOUUD_DETERMINISTIC_MERKLE",
+        "merkle_root": root_hash,
+        "state_count": len(states),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    compressed_size = len(json.dumps(proof_blob))
+    compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > compressed_size else 0.0
+    proof_blob["compression_ratio"] = compression_ratio
+    
+    await db.events.update_one(
+        {"event_id": event_id},
+        {"$set": {"proof_blob": proof_blob}}
+    )
+    
+    processing_time_ms = round((time.time() - start_time) * 1000, 2)
+    
+    return {
+        "transaction_id": event_id,
+        "event_id": event_id,
+        "proof": proof_blob,
+        "proof_size": compressed_size,
         "original_size": original_size,
-        "compressed_size": compressed_size,
         "compression_ratio": compression_ratio,
-        "proof_hash": public_signals[0]
+        "states": states,
+        "hashes": hashes,
+        "merkle_root": root_hash,
+        "processing_time_ms": processing_time_ms
     }
 
-@app.post("/api/v1/tokenize")
-async def tokenize_artifact(req: TokenizeRequest):
-    artifact = await db.artifacts.find_one({"artifact_id": req.artifact_id}, {"_id": 0})
-    if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-
-    token_id = f"CLOUUD-{req.token_type}-" + get_sha256(req.artifact_id)[:6].upper()
-    
-    token_metadata = {
-        "token_id": token_id,
-        "artifact_hash": artifact["merkle_root"],
-        "token_type": req.token_type,
-        "compression_ratio": artifact["compression_ratio"],
-        "original_size_bytes": artifact["original_size"],
-        "compressed_size_bytes": artifact["compressed_size"],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "ipfs_metadata_uri": f"ipfs://QmMock{get_sha256(token_id)[:38]}"
-    }
-
-    await db.tokens.insert_one(token_metadata)
-    
-    return token_metadata
-
-@app.post("/api/v1/token/verify")
-async def verify_token(req: TokenVerifyRequest):
+@app.post("/api/v1/verify")
+async def verify_proof(req: dict):
     start_time = time.time()
     
-    token = await db.tokens.find_one({"token_id": req.token_id}, {"_id": 0})
-    if not token:
-        return {"valid": False, "reason": "Token not found"}
+    event_id = req.get("transaction_id") or req.get("event_id")
+    proof = req.get("proof", {})
+    
+    ev = await db.events.find_one({"event_id": event_id}, {"_id": 0})
+    if not ev:
+        return {"valid": False, "reason": "Event not found"}
         
-    expected_signal = "0x" + get_sha256(token["artifact_hash"])[:64]
+    # The true test of integrity: Re-run the encoder on the CURRENT database payload
+    # If the payload was tampered with, the generated root will not match the proof root.
+    states = normalize_and_encode(ev["payload"])
+    recalculated_root, _ = generate_merkle_chain(states)
+    
+    provided_root = proof.get("merkle_root")
+    
+    is_valid = (recalculated_root == provided_root)
     
     verification_time_ms = round((time.time() - start_time) * 1000, 2)
     
-    if req.proof_hash == expected_signal:
-        return {
-            "valid": True,
-            "compression_verified": True,
-            "artifact_integrity": True,
-            "verification_time_ms": verification_time_ms,
-            "token_type": token["token_type"]
-        }
-    else:
-        return {"valid": False, "reason": "Proof hash mismatch"}
+    return {
+        "valid": is_valid,
+        "commitment_match": is_valid,
+        "recalculated_root": recalculated_root,
+        "provided_root": provided_root,
+        "verification_time_ms": verification_time_ms
+    }
 
-# Backwards compatibility for UI / Tamper tests
 @app.post("/api/v1/tamper")
-async def tamper_event(req: dict):
-    return {"status": "tampered"}
-
-@app.get("/api/v1/api-keys")
-async def generate_api_key():
-    key = "cld_" + str(uuid.uuid4()).replace("-", "")
-    await db.api_keys.insert_one({"key": key, "created_at": datetime.now(timezone.utc).isoformat()})
-    return {"api_key": key}
+async def tamper_event(req: TamperRequest):
+    res = await db.events.update_one(
+        {"event_id": req.event_id},
+        {"$set": {"payload": req.tampered_payload}}
+    )
+    return {"status": "tampered", "modified_count": res.modified_count}
