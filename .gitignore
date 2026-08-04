@@ -86,3 +86,4 @@ android-sdk/
 .env
 **/.env
 !**/.env.example
+artifacts/
