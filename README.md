@@ -141,8 +141,8 @@ The repository is built as a proof-of-concept for systems that need:
 ### What is not complete
 
 - The backend proof pipeline remains a prototype: it generates a Merkle root but does not produce a full zero-knowledge or compact proof artifact.
-- A backend README now exists, but deployment documentation and developer guides can still be expanded.
-- `frontend/README.md` is currently generic Create React App documentation and needs to be replaced with engine-specific usage notes.
+- Backend documentation exists in `backend/README.md`; deployment guides and developer documentation can still be expanded.
+- `frontend/README.md` now includes backend integration notes, though additional dashboard usage guidance would improve the experience.
 - Backend unit tests are present under `backend/tests/`; broader integration tests and CI coverage are still required.
 - The backend now includes admin key protection, but advanced API lifecycle, schema enforcement, and audit controls are still evolving.
 - The retention implementation is a simple proof-of-concept using a `PURGED` sentinel.
