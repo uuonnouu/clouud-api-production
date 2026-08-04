@@ -1,0 +1,16 @@
+{
+  "summary": "Verified fix for /api/v1/proof LLM budget-exceeded 500 error. Endpoint now returns 200 with deterministic fallback states when litellm raises BudgetExceeded.",
+  "tested_scope": ["backend"],
+  "passed": [
+    "POST /api/v1/transactions returns 200 with transaction_id",
+    "POST /api/v1/proof returns 200 with valid proof blob even when LLM stream_message raises BudgetExceeded (fallback states used)",
+    "POST /api/v1/proof returns 404 for unknown transaction_id (error handling intact)",
+    "Backend logs confirm 'LLM Error: Budget has been exceeded' is caught by try/except and endpoint still succeeds"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested (skipped per request)"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "LLM trace generation is effectively MOCKED via deterministic fallback array ['Verify user exists','Verify package validity','Calculate credit equivalence','Update user balance'] whenever the LLM call fails. Response 'states' field returned exactly those 4 strings, confirming fallback path."
+}
