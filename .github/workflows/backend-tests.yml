@@ -56,14 +56,43 @@ jobs:
         run: pip install -r backend/requirements.txt
 
       - name: Boot the API against real Postgres
-        working-directory: backend
-        run: |
-          uvicorn server:app --host 0.0.0.0 --port 8000 &
-          for i in $(seq 1 20); do
-            curl -sf http://localhost:8000/api/v1/health && break
-            sleep 1
-          done
-          curl -sf http://localhost:8000/api/v1/health
+  working-directory: backend
+  run: |
+    echo "Waiting for Postgres..."
+
+    # Wait until PostgreSQL is accepting TCP connections
+    for i in $(seq 1 60); do
+      if bash -c "</dev/tcp/127.0.0.1/5432" >/dev/null 2>&1; then
+        echo "✅ Postgres is ready"
+        break
+      fi
+
+      echo "Postgres not ready yet ($i/60)..."
+      sleep 1
+    done
+
+    # Return to repository root so backend is importable as a module
+    cd ..
+
+    # Launch FastAPI
+    python -m uvicorn backend.server:app \
+      --host 0.0.0.0 \
+      --port 8000 &
+
+    echo "Waiting for API..."
+
+    for i in $(seq 1 30); do
+      if curl -sf http://localhost:8000/api/v1/health; then
+        echo ""
+        echo "✅ API is healthy"
+        exit 0
+      fi
+
+      sleep 1
+    done
+
+    echo "❌ API failed to start"
+    exit 1
 
       - name: Exercise real API flow (admin key -> issue key -> ingest -> proof -> verify -> compress -> download)
         run: |
