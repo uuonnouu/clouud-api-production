@@ -1,0 +1,35 @@
+{
+  "summary": "Tested CLOUUD Artifact Engine Compress -> Tokenize -> Verify flow. /compress works and returns artifact_id + proof_hash. /tokenize returns 500 Internal Server Error due to Mongo insert_one mutating dict with ObjectId, causing FastAPI serialization failure. This blocks the entire flow (verify then fails with 'Token not found' since token was never persisted-returnable). Frontend UI testing skipped because the core backend integration is broken.",
+  "tested_scope": ["backend", "integration"],
+  "passed": [
+    "POST /api/v1/compress returns 200 with artifact_id, proof_hash, sizes, compression_ratio",
+    "Proof hash format correct (0x + 64 hex chars)"
+  ],
+  "failed": [
+    {
+      "area": "backend /api/v1/tokenize",
+      "issue": "500 Internal Server Error - Motor's insert_one() mutates token_metadata dict adding '_id: ObjectId', which FastAPI cannot serialize. Server returns 'Internal Server Error'.",
+      "evidence": "Backend log: ValueError: [TypeError(\"'ObjectId' object is not iterable\"), TypeError('vars() argument must have __dict__ attribute')] at fastapi/encoders.py serialize_response. Curl response body: 'Internal Server Error'.",
+      "priority": "HIGH"
+    },
+    {
+      "area": "backend /api/v1/token/verify",
+      "issue": "Downstream failure: cannot be exercised because tokenize never returns a token_id to the client. Direct verify with a manually-constructed token_id returns 'Token not found' since the token doc actually IS written to Mongo, but the client never receives its id.",
+      "evidence": "curl /token/verify -> {\"valid\":false,\"reason\":\"Token not found\"} (no token_id known to client)",
+      "priority": "HIGH"
+    },
+    {
+      "area": "frontend Step 3 -> Step 4",
+      "issue": "Not tested. UI will surface 'Failed to tokenize' toast because backend 500 blocks progression to Verify step.",
+      "evidence": "Backend /tokenize returns 500; App.js handleTokenize catches and toasts error.",
+      "priority": "HIGH"
+    }
+  ],
+  "action_items": [
+    "Fix /api/v1/tokenize in backend/server.py: strip Mongo _id before returning. Either (a) build the response dict separately from what is inserted, (b) copy token_metadata before insert, or (c) pop('_id', None) after insert_one. Same pattern should be applied defensively to /compress if response ever returns the inserted doc.",
+    "After fix: re-run compress -> tokenize -> verify happy path and also verify frontend Steps 1-4 complete end-to-end."
+  ],
+  "success_rate": {"backend": "33%", "frontend": "not_tested"},
+  "retest_needed": true,
+  "full_testing_deferred": true
+}
