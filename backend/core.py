@@ -56,6 +56,7 @@ async def verify_api_key(api_key: str = Depends(api_key_header)) -> str:
     if not row or row["revoked"]:
         logger.warning("API key lookup failed or revoked for key=%s; row=%r", api_key, row)
         raise HTTPException(status_code=403, detail="Invalid or revoked API Key")
+    check_rate_limit(api_key)
     logger.debug("API key validated: %s", api_key)
     return api_key
 
@@ -66,3 +67,23 @@ async def verify_admin_key(admin_key: str = Depends(admin_key_header)) -> str:
     if not admin_key or admin_key != ADMIN_KEY:
         raise HTTPException(status_code=403, detail="Invalid admin key")
     return admin_key
+
+from collections import defaultdict
+import time
+
+_request_counts: dict = defaultdict(list)
+RATE_LIMIT = 100  # requests per minute per key
+
+def check_rate_limit(api_key: str) -> None:
+    now = time.time()
+    window = 60
+    _request_counts[api_key] = [
+        t for t in _request_counts[api_key]
+        if now - t < window
+    ]
+    if len(_request_counts[api_key]) >= RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. 100 requests per minute."
+        )
+    _request_counts[api_key].append(now)
