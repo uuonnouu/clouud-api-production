@@ -12,6 +12,7 @@ import asyncpg
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, model_validator
+import logging
 
 # All shared auth/db state (DATABASE_URL, ADMIN_KEY, pool, get_sha256,
 # verify_api_key, verify_admin_key) lives in .core. The compression/artifacts
@@ -22,12 +23,24 @@ from .core import DATABASE_URL, ADMIN_KEY, get_sha256, verify_api_key, verify_ad
 
 pool: Optional[asyncpg.pool.Pool] = None
 
+# Debug logger for local development troubleshooting. Remove or lower level in production.
+logger = logging.getLogger("clouud.debug")
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global pool
+    # Log the DATABASE_URL seen by the running process (for debugging only).
+    logger.debug("lifespan startup: DATABASE_URL=%s", os.environ.get("DATABASE_URL"))
     pool = await asyncpg.create_pool(DATABASE_URL)
     core.pool = pool  # keep the shared module's pool reference in sync
+    logger.debug("Created asyncpg pool: %r", pool)
     async with pool.acquire() as connection:
         await init_db(connection)
     retention_task = asyncio.create_task(retention_worker())
@@ -37,6 +50,7 @@ async def lifespan(app: FastAPI):
         retention_task.cancel()
         if pool is not None:
             await pool.close()
+            logger.debug("Closed asyncpg pool")
         core.pool = None
 
 
@@ -116,7 +130,7 @@ async def retention_worker() -> None:
                 one_day_ago,
             )
         except Exception as e:
-            print(f"Retention worker error: {e}")
+            logger.exception("Retention worker error: %s", e)
         await asyncio.sleep(3600)
 
 
