@@ -1,0 +1,144 @@
+{
+  "project_name": "CLOUUD Proof-of-Reasoning Dashboard",
+  "app_type": "developer_saas_dashboard",
+  "theme": "dark",
+  "design_philosophy": {
+    "emotion": "Technical precision, undeniable authority, and playful modern disruption.",
+    "archetype_mix": "Swiss High-Contrast (structural rigor) + Electric Neon/Playful (accent colors & state changes)",
+    "description": "A developer-focused SaaS dashboard bridging dense cryptographic data with modern, clean UI. It uses a high-contrast dark theme, monospace typography for technical data, and terminal-inspired components mixed with vibrant, playful accents to avoid feeling overly sterile or intimidating."
+  },
+  "typography": {
+    "rules": {
+      "headings": {
+        "font_family": "Outfit",
+        "description": "Clean, geometric, and modern corporate SaaS look. No Inter or generic sans.",
+        "weights": [400, 600, 700],
+        "tracking": "tracking-tight"
+      },
+      "body_and_data": {
+        "font_family": "JetBrains Mono",
+        "description": "Tech/Developer focused. Used for JSON, hashes, logs, and primary data displays.",
+        "weights": [400, 500],
+        "tracking": "tracking-normal"
+      },
+      "labels": {
+        "styles": "uppercase, tracking-[0.2em], text-xs, font-bold"
+      }
+    },
+    "hierarchy_limits": {
+      "h1": "text-4xl sm:text-5xl (fluid clamp, never above text-6xl)",
+      "h2": "text-2xl sm:text-3xl",
+      "h3": "text-xl sm:text-2xl",
+      "body": "text-sm",
+      "small": "text-xs"
+    }
+  },
+  "colors": {
+    "backgrounds": {
+      "app": "#0A0B0E",
+      "card_surface": "#111318",
+      "terminal_surface": "#050505"
+    },
+    "borders": {
+      "default": "rgba(255, 255, 255, 0.1)",
+      "highlight": "rgba(255, 255, 255, 0.2)"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#94A3B8",
+      "muted": "#64748B"
+    },
+    "accents_and_playful": {
+      "success_green": "#10B981",
+      "alert_pink": "#EC4899",
+      "warning_yellow": "#EAB308",
+      "tech_blue": "#3B82F6",
+      "neon_cyan": "#00F0FF"
+    },
+    "forbidden_colors": ["#7351B7", "#1B93A4"]
+  },
+  "layouts_and_grids": {
+    "general": {
+      "spacing_scale": "Use generous padding: p-6 or p-8 inside cards. Gap-6 to gap-8 for structural layout.",
+      "container": "Max-w-7xl mx-auto, never strictly center-align text (left-align for readability)."
+    },
+    "bento_grid": {
+      "mode": "High Density Grid (Dashboard)",
+      "columns": "grid-cols-1 lg:grid-cols-12",
+      "gap": "gap-6",
+      "rules": "Every pixel utilized. h-full on children. No jagged bottoms."
+    },
+    "wizard_layout": {
+      "structure": "A left-hand vertical step indicator (cols-3) paired with a massive right-hand active panel (cols-9), OR a top horizontal stepper. Favor vertical for developer tools to allow scrolling complex data."
+    }
+  },
+  "surfaces_and_visuals": {
+    "cards": {
+      "style": "The 'Technical' Look. 1px solid border (border-white/10), flat background (#111318), no heavy shadows. Sharp or max 8px border-radius (rounded-md)."
+    },
+    "terminal_blocks": {
+      "style": "Retro-Futurism. Deep black background (#050505), monospace fonts, bright syntax highlighting (neon cyan/pink/green), subtle inner shadow or 1px border. Perfect for 'Simulated Blockchain Anchor Logs' and 'Raw JSON'."
+    },
+    "glassmorphism": {
+      "usage": "Sticky headers, floating notifications, or context menus.",
+      "style": "bg-black/60 backdrop-blur-xl border-white/10 shadow-lg."
+    }
+  },
+  "components_and_motion": {
+    "shadcn_overrides": {
+      "buttons": "Sharp corners or slight radius (rounded-md). Always explicitly set hover text color (e.g., hover:bg-blue-600 hover:text-white).",
+      "inputs": "Flat, 1px border, focus:ring-1 focus:ring-neon_cyan focus:border-neon_cyan.",
+      "cards": "Remove default heavy box-shadows. Rely on borders."
+    },
+    "motion": {
+      "library": "framer-motion",
+      "rules": "Micro-interactions on hover. Staggered entrance for list items. Do NOT use universal 'transition: all'. Use specific transitions (transform 0.2s ease, opacity 0.2s ease).",
+      "merkle_visualization": "Animate the hashing process (S0 -> H0 -> S1 -> H1) with staggered fading paths/arrows and glowing borders on the active state."
+    }
+  },
+  "key_features_implementation": {
+    "wizard": "State-driven step-by-step UI. 1. Input Transaction -> 2. CLOUUD Encoder -> 3. Reasoning Proof -> 4. Blockchain Anchor -> 5. Verification.",
+    "live_ai_trace": "A terminal-like feed component. Use a typing effect or staggered entry to show reasoning states (verify_user, verify_balance) appearing sequentially.",
+    "hash_merkle_tree": "Flex/Grid based diagram using Framer Motion to draw lines/arrows between states (S0...S4) and their corresponding Hashes (H0...H4), culminating in the final root proof.",
+    "compact_proof_blob": "Display as a self-describing JSON block inside a visually distinct card, utilizing syntax highlighting.",
+    "blockchain_logs": "Terminal style window displaying the simulated Ethereum tx (from, data: CLOUUD_ROOT). Use typewriter effect or raw log appending style."
+  },
+  "icons_and_media": {
+    "icons": {
+      "library": "@phosphor-icons/react",
+      "style": "Duotone or Regular weight. Consistent sizing.",
+      "install_command": "yarn add @phosphor-icons/react"
+    },
+    "images": {
+      "usage": "Minimal. Use abstract textures only if necessary for empty states or hero headers.",
+      "urls": [
+        {
+          "category": "background_texture",
+          "url": "https://images.pexels.com/photos/3612931/pexels-photo-3612931.jpeg",
+          "description": "Subtle abstract metal/honeycomb texture. Use with high opacity overlay (e.g., bg-black/90) just to add noise/texture to a header or empty state."
+        }
+      ]
+    }
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure text meets APCA/WCAG AA standards. Interactive elements must have 3:1 contrast.",
+    "focus": "High contrast focus rings required on all inputs and buttons.",
+    "testing": "All interactive and key informational elements MUST include a 'data-testid' attribute (kebab-case, role-based). Example: data-testid='generate-proof-button'."
+  },
+  "instructions_to_main_agent": [
+    "Prioritize JetBrains Mono for all cryptographic data, hashes, JSON payloads, and logs to emphasize the developer tool aesthetic.",
+    "Implement a robust Wizard state machine to navigate the 5 distinct phases of the Proof-of-Reasoning flow.",
+    "The UI must feel like a high-end corporate SaaS product combined with a hacker terminal. Balance the clean cards with the deep black, glowing-text terminal sections.",
+    "Use Framer Motion to animate the 'CLOUUD Encoder' and 'Hash/Merkle' generation steps so it feels 'live' and computational.",
+    "Do not use default Shadcn heavy drop-shadows on cards; use the 'Technical Grid' approach with 1px borders.",
+    "Ensure the 'Compact Proof Blob' clearly highlights the structural breakdown (transaction_id, algorithm, merkle_root, compression_ratio) as requested in the specs.",
+    "Incorporate the required 'Playful/Colorful' elements by assigning vibrant, distinct colors to different tag states (e.g., Pink for 'State Transition', Yellow for 'Hash Generation', Cyan for 'Merkle Root').",
+    "Never center-align large blocks of text or terminal code."
+  ],
+  "universal_guidelines": {
+    "avoid_ai_slop": "Don't make generic centered layouts or simplistic gradients. Create depth through layered design (z-index) and subtle borders.",
+    "motion_required": "Every interaction needs micro-animations (hover states, transitions).",
+    "no_emoji_icons": "NEVER use AI assistant emoji characters like 🤖🧠💭💡 for icons. Use Phosphor Icons.",
+    "toast_notifications": "Use 'sonner' for toasts."
+  }
+}
