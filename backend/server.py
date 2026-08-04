@@ -226,7 +226,8 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
         raise HTTPException(status_code=404, detail="Event not found")
     if ev["purged"]:
         raise HTTPException(status_code=400, detail="Cannot generate proof for purged payload")
-    payload = ev["payload"] or {}
+    raw_payload = ev["payload"] or {}
+    payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload)
     start_time = time.time()
     states = normalize_and_encode(payload)
     root_hash, hashes = generate_merkle_chain(states)
@@ -245,7 +246,7 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
     proof_blob["compression_ratio"] = compression_ratio
     await pool.execute(
         "UPDATE events SET proof_blob = $1 WHERE event_id = $2",
-        proof_blob,
+        json.dumps(proof_blob),
         event_id,
     )
     processing_time_ms = round((time.time() - start_time) * 1000, 2)
@@ -268,16 +269,17 @@ async def tokenize_event(req: TokenizeRequest, api_key: str = Depends(verify_api
     ev = await pool.fetchrow("SELECT event_id, proof_blob FROM events WHERE event_id = $1", req.event_id)
     if not ev or not ev["proof_blob"]:
         raise HTTPException(status_code=400, detail="Proof must be generated before tokenizing")
+    proof_blob = ev["proof_blob"] if isinstance(ev["proof_blob"], dict) else json.loads(ev["proof_blob"])
     token_id = f"CLOUUD-DATA-{get_sha256(req.event_id)[:8].upper()}"
     token_doc = {
         "token_id": token_id,
         "event_id": req.event_id,
-        "merkle_root": ev["proof_blob"]["merkle_root"],
-        "compression_ratio": ev["proof_blob"]["compression_ratio"],
+        "merkle_root": proof_blob.get("merkle_root"),
+        "compression_ratio": proof_blob.get("compression_ratio"),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await pool.execute(
-        "INSERT INTO tokens (token_id, event_id, merkle_root, compression_ratio, created_at) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO tokens (token_id, event_id, merkle_root, compression_ratio, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (token_id) DO UPDATE SET merkle_root = EXCLUDED.merkle_root, compression_ratio = EXCLUDED.compression_ratio",
         token_doc["token_id"],
         req.event_id,
         token_doc["merkle_root"],
