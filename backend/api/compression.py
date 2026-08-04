@@ -125,3 +125,46 @@ async def compress_upload(
             "proof": proof_blob,
         }
     )
+
+
+@router.get("/decompress/{artifact_id}")
+async def decompress_artifact(
+    artifact_id: str,
+    api_key: str = Depends(core.verify_api_key),
+):
+    import zstandard as zstd
+    import gzip
+    from pathlib import Path
+    from fastapi.responses import Response
+
+    artifact_dir = Path("artifacts") / artifact_id
+    data_path = artifact_dir / "data.bin"
+    metadata_path = artifact_dir / "metadata.json"
+
+    if not data_path.exists():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    metadata = json.loads(metadata_path.read_text())
+    compressed = data_path.read_bytes()
+    algorithm = metadata.get("algorithm", "zstd")
+
+    try:
+        if algorithm == "zstd":
+            dctx = zstd.ZstdDecompressor()
+            decompressed = dctx.decompress(compressed)
+        else:
+            decompressed = gzip.decompress(compressed)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Decompression failed: {str(e)}")
+
+    return Response(
+        content=decompressed,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{metadata.get("original_filename", artifact_id)}"',
+            "X-Original-Size": str(metadata.get("original_size", 0)),
+            "X-Compressed-Size": str(metadata.get("compressed_size", 0)),
+            "X-Algorithm": algorithm,
+            "X-Artifact-Id": artifact_id,
+        }
+    )
