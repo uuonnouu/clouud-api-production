@@ -242,7 +242,7 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     compressed_size = len(json.dumps(proof_blob))
-    compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > compressed_size else 0.0
+    compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > 0 else 0.0
     proof_blob["compression_ratio"] = compression_ratio
     await pool.execute(
         "UPDATE events SET proof_blob = $1 WHERE event_id = $2",
