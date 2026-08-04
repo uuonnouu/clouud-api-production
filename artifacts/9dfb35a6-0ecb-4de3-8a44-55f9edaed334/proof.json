@@ -1,0 +1,10 @@
+{
+  "proof_hash": "c126e89783e2d1c23ffae194eb35562e7e37d98f5f07f572acba41f511532afb",
+  "merkle_root": null,
+  "verification_status": "created",
+  "proof_blob": {
+    "artifact_id": "9dfb35a6-0ecb-4de3-8a44-55f9edaed334",
+    "sha256": "9463b837b831892115e40d3162d770bcc868aed1237547027b2a109433ec3d59",
+    "algorithm": "zstd"
+  }
+}

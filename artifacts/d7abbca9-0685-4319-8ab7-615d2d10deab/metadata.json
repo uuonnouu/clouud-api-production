@@ -1,0 +1,20 @@
+{
+  "artifact_id": "d7abbca9-0685-4319-8ab7-615d2d10deab",
+  "original_filename": "pythagorean-tree-2025-08-18T07-52-44_2_1765193180933.obj",
+  "original_size": 35847654,
+  "compressed_size": 7579672,
+  "compression_ratio": 0.788559,
+  "algorithm": "zstd",
+  "created_at": "2026-08-04T19:36:02.073832+00:00",
+  "hash": "b71a19beda1914e5879984adf54446156f36be4e33aa5287b66a9ef847efc948",
+  "analysis": {
+    "detected_type": "model/obj",
+    "original_size": 35847654,
+    "is_text": true,
+    "structure": "text",
+    "summary": {
+      "line_count": 1371709,
+      "word_count": 5412182
+    }
+  }
+}

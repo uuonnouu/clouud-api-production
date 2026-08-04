@@ -1,0 +1,25 @@
+{
+  "artifact_id": "e4d176b4-ced6-4c75-85cb-2fadb1eda970",
+  "original_filename": "test.json",
+  "original_size": 34,
+  "compressed_size": 43,
+  "compression_ratio": -0.264706,
+  "algorithm": "zstd",
+  "created_at": "2026-08-04T19:32:21.957957+00:00",
+  "hash": "1d9b329f171d1b577464039aa288f29c3e86de2ab22105b61f55dfdc3fe90022",
+  "analysis": {
+    "detected_type": "application/json",
+    "original_size": 34,
+    "is_text": true,
+    "structure": "object",
+    "summary": {
+      "keys": [
+        "test"
+      ],
+      "field_count": 1
+    },
+    "sample": {
+      "test": "hello world from UUON"
+    }
+  }
+}

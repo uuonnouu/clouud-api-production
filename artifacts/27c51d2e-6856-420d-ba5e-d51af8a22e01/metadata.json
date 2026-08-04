@@ -1,0 +1,20 @@
+{
+  "artifact_id": "27c51d2e-6856-420d-ba5e-d51af8a22e01",
+  "original_filename": "528hz-structure-solid_1765183649646.obj",
+  "original_size": 1559676,
+  "compressed_size": 469395,
+  "compression_ratio": 0.699043,
+  "algorithm": "zstd",
+  "created_at": "2026-08-04T19:35:31.083180+00:00",
+  "hash": "e2226b36ab16695f099bf2ba0254a04806d225d46060471c64041766da7228a4",
+  "analysis": {
+    "detected_type": "model/obj",
+    "original_size": 1559676,
+    "is_text": true,
+    "structure": "text",
+    "summary": {
+      "line_count": 32212,
+      "word_count": 128845
+    }
+  }
+}

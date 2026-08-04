@@ -1,0 +1,15 @@
+{
+  "proof_hash": "65845d05b798fe8a6f1de731cb0a548c3703d22c4efca8bc83e94964f014bcf9",
+  "merkle_root": "27430a24e3e02755e7086c733556ed8c624163e70bb2c121695bb20d4942919b",
+  "verification_status": "created",
+  "proof_blob": {
+    "proof_version": "CLOUUD-COMPRESSION-1.0",
+    "artifact_id": "b6d818c2-2868-436c-b738-92a26b3e275b",
+    "filename": "test.txt",
+    "original_size": 19,
+    "algorithm": "zstd",
+    "merkle_root": "27430a24e3e02755e7086c733556ed8c624163e70bb2c121695bb20d4942919b",
+    "state_count": 5,
+    "created_at": "2026-08-04T18:04:02.158504+00:00"
+  }
+}

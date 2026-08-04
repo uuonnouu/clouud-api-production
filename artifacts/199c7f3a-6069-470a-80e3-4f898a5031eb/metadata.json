@@ -1,0 +1,20 @@
+{
+  "artifact_id": "199c7f3a-6069-470a-80e3-4f898a5031eb",
+  "original_filename": "newtons_apple-solid_1765183996606.obj",
+  "original_size": 795839,
+  "compressed_size": 177476,
+  "compression_ratio": 0.776995,
+  "algorithm": "zstd",
+  "created_at": "2026-08-04T19:36:00.801608+00:00",
+  "hash": "8b5833957b8c9f3dde2c73413af6748a932c5ce0f5eb599e4975789558c35d85",
+  "analysis": {
+    "detected_type": "model/obj",
+    "original_size": 795839,
+    "is_text": true,
+    "structure": "text",
+    "summary": {
+      "line_count": 16560,
+      "word_count": 66238
+    }
+  }
+}

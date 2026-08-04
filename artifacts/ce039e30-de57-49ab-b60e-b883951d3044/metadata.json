@@ -1,0 +1,20 @@
+{
+  "artifact_id": "ce039e30-de57-49ab-b60e-b883951d3044",
+  "original_filename": "FractalSkin_MANDELBROT_256x256_(3)_1765150985150.obj",
+  "original_size": 19174601,
+  "compressed_size": 3401516,
+  "compression_ratio": 0.822603,
+  "algorithm": "zstd",
+  "created_at": "2026-08-04T19:35:59.728676+00:00",
+  "hash": "cf1607efdb1d662630ee168f1b3990dd06cb38e66799c4c2dd14216b13a6a3bf",
+  "analysis": {
+    "detected_type": "model/obj",
+    "original_size": 19174601,
+    "is_text": true,
+    "structure": "text",
+    "summary": {
+      "line_count": 526354,
+      "word_count": 2105383
+    }
+  }
+}

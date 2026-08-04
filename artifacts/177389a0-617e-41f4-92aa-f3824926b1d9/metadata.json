@@ -1,0 +1,20 @@
+{
+  "artifact_id": "177389a0-617e-41f4-92aa-f3824926b1d9",
+  "original_filename": "FractalSkin_TANGENT_WAVE_256x256_(1)_1765149660067.obj",
+  "original_size": 19187552,
+  "compressed_size": 1605373,
+  "compression_ratio": 0.916333,
+  "algorithm": "zstd",
+  "created_at": "2026-08-04T19:36:00.719432+00:00",
+  "hash": "ec2046ae24a1fcb758e86c52ebd255a1c75cba527d1d1e9d27377878909b8af5",
+  "analysis": {
+    "detected_type": "model/obj",
+    "original_size": 19187552,
+    "is_text": true,
+    "structure": "text",
+    "summary": {
+      "line_count": 526354,
+      "word_count": 2105383
+    }
+  }
+}

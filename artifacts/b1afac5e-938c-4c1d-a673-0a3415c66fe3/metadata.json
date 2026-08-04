@@ -1,0 +1,20 @@
+{
+  "artifact_id": "b1afac5e-938c-4c1d-a673-0a3415c66fe3",
+  "original_filename": "FractalSkin_SPHERICAL_H_256x256_(1)_1765151022104.obj",
+  "original_size": 19148647,
+  "compressed_size": 2959178,
+  "compression_ratio": 0.845463,
+  "algorithm": "zstd",
+  "created_at": "2026-08-04T19:36:00.275171+00:00",
+  "hash": "d20d5ce1282c0d78b788c4b5588592c4b47a304a1ddb30bf780ac47e06920e81",
+  "analysis": {
+    "detected_type": "model/obj",
+    "original_size": 19148647,
+    "is_text": true,
+    "structure": "text",
+    "summary": {
+      "line_count": 526354,
+      "word_count": 2105383
+    }
+  }
+}
