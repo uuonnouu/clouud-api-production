@@ -39,6 +39,16 @@ This frontend is part of the larger CLOUUD engine repo and is meant to be used a
 
 If you are deploying the app, ensure the backend API is available and the frontend is configured to point at the correct service endpoint.
 
+## Backend Integration
+
+The backend service is documented in `backend/README.md`. Run the backend separately and configure the frontend to use the backend base URL.
+
+Example environment variables:
+
+```bash
+REACT_APP_API_BASE_URL=http://localhost:8000/api/v1
+```
+
 ## Documentation Gap
 
 This file is currently a generic frontend readme and should be enhanced with:

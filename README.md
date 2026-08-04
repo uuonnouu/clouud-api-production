@@ -1,10 +1,17 @@
 # CLOUUD API Production
 
-Compact Logical Understanding & Unified Data Compression
+Compact Logical Understanding & Unified Data Compression Engine
 
 ## Project Description
 
 `clouud-api-production` is a unified engine repository for the CLOUUD research platform. It combines backend ingestion and proof generation with a frontend developer dashboard, treating the whole repository as a single information-engine unit.
+
+This repo is not only about compression. The stronger identity is an engine that delivers:
+
+- compact representation,
+- provenance,
+- verification,
+- portable artifacts.
 
 This repo is not just a backend service or a React app. It is an integrated engine system for:
 
@@ -54,29 +61,33 @@ The goal is not only smaller files, but a trusted and portable information artif
 ## High-Level Architecture
 
 ```
-                   INPUT DATA
+                 DATA SOURCES
+                      |
+                      v
 
-                       |
-                       v
+              INGESTION ENGINE
+                      |
+                      v
 
-               CLOUUD PROCESSOR
+             STATE REPRESENTATION
+                      |
+        -----------------------------
+        |                           |
+        v                           v
 
-                       |
-      ---------------------------------
-      |        |          |           |
-      v        v          v           v
+ COMPRESSION ENGINE          PROOF ENGINE
+        |                           |
+        -----------------------------
+                      |
+                      v
 
-  Ingestion  Extraction  Compression  Proof
-   Engine      Engine      Engine     Engine
+             VERIFICATION ENGINE
+                      |
+          ----------------------
+          |                    |
+          v                    v
 
-      ---------------------------------
-                       |
-                       v
-
-               VERIFICATION ARTIFACT
-                       |
-                       v
-                FRONTEND DASHBOARD
+     VERIFIED ARTIFACT     DASHBOARD
 ```
 
 ## Key Capabilities
@@ -87,6 +98,34 @@ The goal is not only smaller files, but a trusted and portable information artif
 - independent proof verification
 - dashboard visibility for engine operations
 - tamper detection
+- PostgreSQL / Neon persistence and admin key protection
+
+## Current Proof-of-Concept Status
+
+The current CLOUUD MVP demonstrates an end-to-end pipeline:
+
+1. Structured data enters the engine
+2. The engine creates a deterministic state representation
+3. A cryptographic commitment is generated
+4. A compact proof artifact is produced
+5. The artifact can be independently verified
+6. Changes to the original state are detected
+
+Current implementation:
+
+✓ FastAPI ingestion layer
+✓ React developer dashboard
+✓ Deterministic proof generation
+✓ Merkle commitment generation
+✓ Verification endpoint
+✓ Tamper detection workflow
+
+Research-stage components:
+
+- Zero knowledge proofs
+- Production token registry
+- Distributed verification network
+- Advanced semantic compression
 
 ## Use Case
 
@@ -102,10 +141,10 @@ The repository is built as a proof-of-concept for systems that need:
 ### What is not complete
 
 - The backend proof pipeline remains a prototype: it generates a Merkle root but does not produce a full zero-knowledge or compact proof artifact.
-- No dedicated `backend/README.md` or deployment documentation for the service.
+- A backend README now exists, but deployment documentation and developer guides can still be expanded.
 - `frontend/README.md` is currently generic Create React App documentation and needs to be replaced with engine-specific usage notes.
-- The repository has no active tests or CI pipeline in `tests/`.
-- The backend lacks strong schema validation, robust API key lifecycle, and secure admin access control.
+- Backend unit tests are present under `backend/tests/`; broader integration tests and CI coverage are still required.
+- The backend now includes admin key protection, but advanced API lifecycle, schema enforcement, and audit controls are still evolving.
 - The retention implementation is a simple proof-of-concept using a `PURGED` sentinel.
 
 ### Prototype / obsolete areas
@@ -125,6 +164,7 @@ The repository is built as a proof-of-concept for systems that need:
 - Add observability, monitoring, and metrics for proof generation, ingestion rate, and tamper events.
 - Create a dedicated backend README and developer docs for the whole engine.
 - Add end-to-end tests for backend APIs, frontend dashboard flows, and proof verification.
+- Add CI/workflow status for build, tests, proof verification, and security scan coverage.
 
 ### IoT benefits and opportunities
 
@@ -134,6 +174,31 @@ The repository is built as a proof-of-concept for systems that need:
 - Compact proofs support offline or intermittent connectivity by enabling later verification.
 - Privacy-aware IoT use cases can prove the validity of data without transmitting full private details.
 - The engine can support digital twin provenance, firmware state verification, and secure device audit trails.
+
+CLOUUD can explore a new sensor network flow:
+
+```
+Sensor
+ |
+Local state compression
+ |
+Proof artifact
+ |
+Cloud verification
+```
+
+This model can enable less bandwidth, lower storage, and easier auditing for practical IoT deployments.
+
+## What CLOUUD Is Not
+
+CLOUUD is not designed to replace:
+
+- traditional databases
+- existing compression algorithms
+- cryptographic primitives
+- blockchain networks
+
+Instead, CLOUUD explores how these technologies can work together to create compact, verifiable information artifacts.
 
 ## Getting Started
 
