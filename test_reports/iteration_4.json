@@ -1,0 +1,18 @@
+{
+  "summary": "Validated the new 1MB benchmark, ZK proof truncation, and IPFS Vault Anchor features end-to-end on the public URL.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "POST /api/v1/events accepts ~1MB JSON payload -> 200 with event_id",
+    "POST /api/v1/proof handles 1MB payload via truncation, returns valid proof (proof_size=727B, original_size=858KB, compression_ratio=0.999)",
+    "POST /api/v1/vault-anchor returns mocked IPFS CID (Qm...) with correct size_bytes and gateway URL",
+    "Frontend 'Load 1MB Benchmark' button populates textarea with ~1.22 MB JSON",
+    "Frontend end-to-end flow: ingest -> generate proof -> verify -> Step 6 loads",
+    "Frontend Step 6 'Anchor Raw Data to IPFS' button works and displays CID, size, and PINNED confirmation"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "IPFS upload and Circom SNARK are structurally MOCKED as documented in review request."
+}

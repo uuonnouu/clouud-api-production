@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  CheckCircle, Play, ShieldCheck, Hash, Hexagon, Database, Code, 
-  TerminalWindow, CaretRight, ShieldWarning, Key, FileText, Graph
+  CheckCircle, Play, ShieldCheck, Graph, Hexagon, Database, Code, 
+  TerminalWindow, CaretRight, ShieldWarning, Key, FileText, CloudArrowUp, ChartLineUp
 } from '@phosphor-icons/react';
 import { Toaster, toast } from 'sonner';
 
@@ -11,15 +11,15 @@ const API_URL = process.env.REACT_APP_BACKEND_URL + "/api/v1";
 const Steps = [
   { id: 1, title: 'Event Ingestion', icon: FileText },
   { id: 2, title: 'Reasoning Capture', icon: Code },
-  { id: 3, title: 'ZK Proof Gen', icon: Graph },
+  { id: 3, title: 'ZK Circom SNARK', icon: Graph },
   { id: 4, title: 'Persistence', icon: Database },
   { id: 5, title: 'Zero Knowledge Verify', icon: ShieldCheck },
-  { id: 6, title: 'Blockchain', icon: TerminalWindow },
+  { id: 6, title: 'On/Off-Chain Anchor', icon: TerminalWindow },
   { id: 7, title: 'Tamper Test', icon: ShieldWarning }
 ];
 
 export default function App() {
-  const [view, setView] = useState('playground'); // 'playground' | 'api'
+  const [view, setView] = useState('playground'); 
   const [currentStep, setCurrentStep] = useState(1);
   const [eventData, setEventData] = useState({
     event_type: "ai_decision_log",
@@ -36,11 +36,23 @@ export default function App() {
   const [proofData, setProofData] = useState(null);
   const [verifyResult, setVerifyResult] = useState(null);
   const [anchorData, setAnchorData] = useState(null);
+  const [vaultData, setVaultData] = useState(null);
   const [tamperVerifyResult, setTamperVerifyResult] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [testReport, setTestReport] = useState({});
 
   const [apiKey, setApiKey] = useState(null);
+
+  const handleLoadBenchmark = () => {
+     const massivePayload = { benchmark: "CLOUUD_1MB_STRESS_TEST", data: [] };
+     for(let i=0; i<15000; i++) { // Generates roughly a 1MB JSON string
+        massivePayload.data.push({ iter: i, val: Math.random().toString(36).substring(2), state: "active" });
+     }
+     setEventData({...eventData, event_type: "benchmark_stress_test_1MB"});
+     const str = JSON.stringify(massivePayload, null, 2);
+     setPayloadText(str);
+     toast.success(`Loaded ${(str.length / (1024*1024)).toFixed(2)} MB Payload!`);
+  };
 
   const handleCreateEvent = async () => {
     setIsLoading(true);
@@ -76,7 +88,7 @@ export default function App() {
       const data = await res.json();
       setProofData(data);
       setTestReport(prev => ({ ...prev, capture: true, compress: true, proof: true, persist: true }));
-      toast.success('Zero Knowledge Proof Generated');
+      toast.success('Zero Knowledge SNARK Proof Generated');
       setCurrentStep(5);
     } catch (e) {
       toast.error('Failed to generate ZK proof');
@@ -100,7 +112,7 @@ export default function App() {
       setVerifyResult(data);
       if(data.valid) {
         setTestReport(prev => ({ ...prev, verify: true }));
-        toast.success('ZK Verification Successful');
+        toast.success('ZK SNARK Verification Successful');
         setCurrentStep(6);
       } else {
         toast.error('Verification Failed');
@@ -111,7 +123,7 @@ export default function App() {
     setIsLoading(false);
   };
 
-  const handlePublish = async () => {
+  const handlePublishChain = async () => {
     setIsLoading(true);
     try {
       const res = await fetch(`${API_URL}/publish-proof`, {
@@ -122,19 +134,42 @@ export default function App() {
       const data = await res.json();
       setAnchorData(data);
       setTestReport(prev => ({ ...prev, anchor: true }));
-      toast.success('Anchored Public Signal to Blockchain');
-      setCurrentStep(7);
+      toast.success('Anchored Public Signal to L2 Base');
     } catch (e) {
       toast.error('Publish error');
     }
     setIsLoading(false);
   };
 
+  const handlePublishVault = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/vault-anchor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_id: eventId })
+      });
+      const data = await res.json();
+      setVaultData(data);
+      toast.success('Raw Trace Anchored to IPFS');
+    } catch (e) {
+      toast.error('Vault anchor error');
+    }
+    setIsLoading(false);
+  };
+
+  const proceedToTamper = () => setCurrentStep(7);
+
   const handleTamper = async () => {
     setIsLoading(true);
     try {
       let tampered = JSON.parse(payloadText);
-      tampered.risk_score = 999; // Malicious edit
+      // Try to mutate payload without breaking structure
+      if (Array.isArray(tampered.data) && tampered.data.length > 0) {
+        tampered.data[0].val = "HACKED";
+      } else {
+        tampered.hacked = true;
+      }
       
       await fetch(`${API_URL}/tamper`, {
         method: 'POST',
@@ -181,8 +216,18 @@ export default function App() {
       case 1:
         return (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">Stage 1: Any Event Ingestion</h2>
-            <p className="text-secondary text-sm">Send any arbitrary JSON state payload to the CLOUUD engine.</p>
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">Stage 1: Any Event Ingestion</h2>
+                <p className="text-secondary text-sm">Send any arbitrary JSON state payload to the CLOUUD engine.</p>
+              </div>
+              <button 
+                onClick={handleLoadBenchmark}
+                className="bg-accent-pink/10 text-accent-pink border border-accent-pink/30 hover:bg-accent-pink/20 px-4 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all"
+              >
+                <ChartLineUp size={16}/> Load 1MB Benchmark
+              </button>
+            </div>
             
             <div className="bg-surface border border-white/10 p-6 rounded-md space-y-4">
               <div>
@@ -195,7 +240,10 @@ export default function App() {
                 />
               </div>
               <div>
-                <label className="uppercase tracking-[0.2em] text-xs font-bold text-muted block mb-2">JSON Payload</label>
+                <div className="flex justify-between">
+                  <label className="uppercase tracking-[0.2em] text-xs font-bold text-muted block mb-2">JSON Payload</label>
+                  <span className="text-xs text-muted font-mono">{(payloadText.length / 1024).toFixed(2)} KB</span>
+                </div>
                 <textarea 
                   rows={6}
                   value={payloadText} 
@@ -220,7 +268,7 @@ export default function App() {
         return (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">Stage 2-4: Zero Knowledge Engine</h2>
-            <p className="text-secondary text-sm">Compressing states and calculating a ZK-SNARK proof that preserves data privacy.</p>
+            <p className="text-secondary text-sm">Compiling Circom circuits & calculating a ZK-SNARK Groth16 proof.</p>
             
             <div className="bg-terminal border border-white/10 p-6 rounded-md font-mono text-sm relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-accent-cyan to-accent-pink opacity-50"></div>
@@ -237,13 +285,13 @@ export default function App() {
                   data-testid="btn-generate-proof"
                   className="bg-primary text-background hover:bg-white/90 p-3 rounded-md font-bold transition-all w-full mt-4 flex justify-center items-center gap-2"
                 >
-                  <Graph weight="bold"/> {isLoading ? 'Generating ZK Proof...' : 'Generate ZK-SNARK Proof'}
+                  <Graph weight="bold"/> {isLoading ? 'Generating SNARKJS Proof...' : 'Generate ZK-SNARK Proof'}
                 </button>
               ) : (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                   
                   <div>
-                    <h3 className="text-accent-pink uppercase tracking-[0.2em] text-xs font-bold mb-2">Live State Extraction</h3>
+                    <h3 className="text-accent-pink uppercase tracking-[0.2em] text-xs font-bold mb-2">Circom State Extraction</h3>
                     {proofData.states.map((s, i) => (
                       <div key={i} className="text-secondary mb-1 border-l-2 border-accent-pink/50 pl-3">
                         [{i}] {s}
@@ -253,19 +301,25 @@ export default function App() {
 
                   <div className="border border-accent-cyan/30 bg-accent-cyan/5 p-4 rounded-md">
                     <h3 className="text-accent-cyan uppercase tracking-[0.2em] text-xs font-bold mb-2">Zero Knowledge Proof Blob (Groth16)</h3>
-                    <pre className="text-primary whitespace-pre-wrap break-all text-xs">
-                      {JSON.stringify(proofData.proof, null, 2)}
-                    </pre>
+                    <div className="h-32 overflow-y-auto">
+                      <pre className="text-primary whitespace-pre-wrap break-all text-xs">
+                        {JSON.stringify(proofData.proof, null, 2)}
+                      </pre>
+                    </div>
                   </div>
 
-                  <div className="flex justify-between items-center bg-surface p-4 rounded border border-white/10">
-                    <div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-surface p-4 rounded border border-white/10">
                       <div className="text-muted text-xs uppercase tracking-wider">Compression</div>
-                      <div className="text-accent-green font-bold">{proofData.original_size}B → {proofData.proof_size}B</div>
+                      <div className="text-accent-green font-bold text-lg mt-1">
+                        {(proofData.original_size / 1024).toFixed(2)}KB → {proofData.proof_size}B
+                      </div>
+                      <div className="text-accent-green/70 text-xs">Ratio: {(proofData.compression_ratio * 100).toFixed(4)}%</div>
                     </div>
-                    <div>
+                    <div className="bg-surface p-4 rounded border border-white/10">
                       <div className="text-muted text-xs uppercase tracking-wider">Privacy</div>
-                      <div className="text-accent-cyan font-bold">100% ZK Payload</div>
+                      <div className="text-accent-cyan font-bold text-lg mt-1">100% ZK Payload</div>
+                      <div className="text-accent-cyan/70 text-xs">No Raw Data Exposed</div>
                     </div>
                   </div>
 
@@ -285,7 +339,7 @@ export default function App() {
         return (
           <div className="space-y-6">
              <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">Stage 5: ZK Verification</h2>
-             <p className="text-secondary text-sm">Verifying integrity mathematically via Public Signals (No access to original payload).</p>
+             <p className="text-secondary text-sm">Verifying integrity mathematically via Public Signals (SnarkJS Simulation).</p>
 
              <div className="bg-surface border border-white/10 p-6 rounded-md space-y-4">
                 <button 
@@ -310,6 +364,12 @@ export default function App() {
                         Mathematical Integrity: {verifyResult.zk_math_verified.toString()}<br/>
                         Privacy Preserved: {verifyResult.privacy_preserved.toString()}
                      </div>
+                     <button 
+                      onClick={() => setCurrentStep(6)}
+                      className="mt-4 w-full bg-white/10 hover:bg-white/20 text-white p-2 rounded transition-all"
+                     >
+                        Continue to Anchoring
+                     </button>
                   </motion.div>
                 )}
              </div>
@@ -318,28 +378,57 @@ export default function App() {
       case 6:
         return (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">Stage 6: Blockchain Anchor</h2>
-            <p className="text-secondary text-sm">Publish only the ZK Public Signal to the immutable ledger.</p>
+            <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">Stage 6: On/Off-Chain Anchor</h2>
+            <p className="text-secondary text-sm">Publish ZK signal to L2 Base, and optionally anchor massive raw payloads to IPFS Vault.</p>
             
-            <div className="bg-terminal border border-white/10 p-6 rounded-md font-mono text-sm relative">
-              <button 
-                onClick={handlePublish}
-                disabled={isLoading}
-                data-testid="btn-publish-proof"
-                className="w-full bg-primary text-background hover:bg-white/90 p-3 rounded-md font-bold transition-all mb-4"
-              >
-                {isLoading ? 'Publishing...' : 'Anchor Public Signal'}
-              </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Blockchain Anchor */}
+              <div className="bg-terminal border border-white/10 p-6 rounded-md font-mono text-sm relative">
+                <button 
+                  onClick={handlePublishChain}
+                  disabled={isLoading || anchorData}
+                  className="w-full bg-primary text-background hover:bg-white/90 p-3 rounded-md font-bold transition-all mb-4"
+                >
+                  {isLoading ? '...' : 'Anchor Public Signal (L2)'}
+                </button>
 
-              {anchorData && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-accent-blue space-y-2 break-all">
-                  <div><span className="text-muted">Chain:</span> {anchorData.chain}</div>
-                  <div><span className="text-muted">Tx Hash:</span> {anchorData.tx_hash}</div>
-                  <div><span className="text-muted">ZK Signal:</span> {anchorData.zk_public_signal}</div>
-                  <div><span className="text-muted">Status:</span> CONFIRMED</div>
-                </motion.div>
-              )}
+                {anchorData && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-accent-blue space-y-2 break-all">
+                    <div><span className="text-muted">Chain:</span> {anchorData.chain}</div>
+                    <div><span className="text-muted">Tx Hash:</span> {anchorData.tx_hash}</div>
+                    <div><span className="text-muted">ZK Signal:</span> {anchorData.zk_public_signal}</div>
+                    <div className="text-accent-green font-bold mt-2">CONFIRMED ✓</div>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* IPFS Data Vault */}
+              <div className="bg-terminal border border-white/10 p-6 rounded-md font-mono text-sm relative">
+                <button 
+                  onClick={handlePublishVault}
+                  disabled={isLoading || vaultData}
+                  className="w-full bg-accent-cyan text-background hover:bg-accent-cyan/90 p-3 rounded-md font-bold transition-all mb-4 flex justify-center items-center gap-2"
+                >
+                  <CloudArrowUp weight="bold"/> {isLoading ? '...' : 'Anchor Raw Data to IPFS'}
+                </button>
+
+                {vaultData && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-accent-cyan space-y-2 break-all">
+                    <div><span className="text-muted">Network:</span> {vaultData.network}</div>
+                    <div><span className="text-muted">CID:</span> {vaultData.cid}</div>
+                    <div><span className="text-muted">Size:</span> {(vaultData.size_bytes/1024).toFixed(2)} KB</div>
+                    <div className="text-accent-green font-bold mt-2">PINNED ✓</div>
+                  </motion.div>
+                )}
+              </div>
             </div>
+
+            <button 
+              onClick={proceedToTamper}
+              className="w-full text-center text-sm font-bold text-muted hover:text-white transition-colors pt-4"
+            >
+              Proceed to Tamper Test →
+            </button>
           </div>
         );
       case 7:
@@ -355,7 +444,7 @@ export default function App() {
                 data-testid="btn-tamper-test"
                 className="w-full bg-accent-pink/20 text-accent-pink border border-accent-pink/50 hover:bg-accent-pink/30 p-3 rounded-md font-bold transition-all mb-4"
               >
-                {isLoading ? 'Running...' : 'Modify Payload & Verify'}
+                {isLoading ? 'Running...' : 'Modify Payload & Verify SNARK'}
               </button>
 
               {tamperVerifyResult && (
@@ -380,7 +469,7 @@ export default function App() {
                     <ReportRow label="Zero Knowledge Proof" pass={testReport.proof} />
                     <ReportRow label="Independent ZK Verify" pass={testReport.verify} />
                     <ReportRow label="Tamper Detection" pass={testReport.tamper} />
-                    <ReportRow label="Blockchain Anchor" pass={testReport.anchor} />
+                    <ReportRow label="On-Chain Anchor" pass={testReport.anchor} />
                  </div>
                  <div className="text-center mt-8 text-accent-green font-bold font-mono tracking-widest text-lg">
                    CLOUUD SYSTEM OPERATIONAL
