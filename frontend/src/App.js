@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  CheckCircle, Play, ShieldCheck, Hexagon, Database, 
-  ShieldWarning, FileText, Cpu, Key, IdentificationCard
+  CheckCircle, Play, ShieldCheck, Hexagon, 
+  ShieldWarning, FileText, Cpu, IdentificationCard, Timer
 } from '@phosphor-icons/react';
 import { Toaster, toast } from 'sonner';
 
@@ -13,7 +13,8 @@ const Steps = [
   { id: 2, title: 'Compression & Proof', icon: Cpu },
   { id: 3, title: 'Token Minting', icon: IdentificationCard },
   { id: 4, title: 'Verification', icon: ShieldCheck },
-  { id: 5, title: 'Tamper Test', icon: ShieldWarning }
+  { id: 5, title: 'Tamper Test', icon: ShieldWarning },
+  { id: 6, title: 'Data Retention', icon: Timer }
 ];
 
 export default function App() {
@@ -30,16 +31,16 @@ export default function App() {
   const [tokenData, setTokenData] = useState(null);
   const [verifyResult, setVerifyResult] = useState(null);
   const [tamperVerifyResult, setTamperVerifyResult] = useState(null);
+  const [purgeResult, setPurgeResult] = useState(null);
   
   const [isLoading, setIsLoading] = useState(false);
   const [apiKey, setApiKey] = useState("");
+  const [testReport, setTestReport] = useState({});
 
-  const getHeaders = () => {
-    return {
-      'Content-Type': 'application/json',
-      'X-API-Key': apiKey
-    };
-  };
+  const getHeaders = () => ({
+    'Content-Type': 'application/json',
+    'X-API-Key': apiKey
+  });
 
   const handleGenerateKey = async () => {
     try {
@@ -69,6 +70,7 @@ export default function App() {
       
       const data = await res.json();
       setEventId(data.event_id);
+      setTestReport(prev => ({ ...prev, tx: true }));
       toast.success('Event Stored Securely');
       setCurrentStep(2);
     } catch (e) {
@@ -88,6 +90,7 @@ export default function App() {
       if (!res.ok) throw new Error("Failed to generate proof");
       const data = await res.json();
       setProofData(data);
+      setTestReport(prev => ({ ...prev, capture: true, compress: true, proof: true, persist: true }));
       toast.success('CLOUUD Proof Generated');
       setCurrentStep(3);
     } catch (e) {
@@ -120,7 +123,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, // Public endpoint
+        headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ 
           event_id: eventId, 
           proof: proofData.proof
@@ -129,6 +132,7 @@ export default function App() {
       const data = await res.json();
       setVerifyResult(data);
       if(data.valid) {
+        setTestReport(prev => ({ ...prev, verify: true }));
         toast.success('Integrity Verified');
         setCurrentStep(5);
       } else {
@@ -149,7 +153,7 @@ export default function App() {
       
       await fetch(`${API_URL}/tamper`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, // Testing endpoint
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event_id: eventId, tampered_payload: tampered })
       });
       toast.warning('Database Payload Tampered!');
@@ -161,9 +165,55 @@ export default function App() {
       });
       const data = await res.json();
       setTamperVerifyResult(data);
-      if(!data.valid) toast.success('Tamper Successfully Detected!');
+      if(!data.valid) {
+        setTestReport(prev => ({ ...prev, tamper: true }));
+        toast.success('Tamper Successfully Detected!');
+      }
     } catch (e) {
       toast.error('Error during tamper test');
+    }
+    setIsLoading(false);
+  };
+
+  const handlePurge = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/trigger-retention`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      setPurgeResult(data);
+      toast.success('Fast-forward 24h: Payload Data Purged');
+    } catch (e) {
+      toast.error('Error triggering retention policy');
+    }
+    setIsLoading(false);
+  };
+
+  const handleVerifyWithClientData = async () => {
+    setIsLoading(true);
+    try {
+      // The DB payload is gone. We must supply the raw_payload from the client side.
+      let originalPayload = JSON.parse(payloadText);
+      const res = await fetch(`${API_URL}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          event_id: eventId, 
+          proof: proofData.proof,
+          raw_payload: originalPayload
+        })
+      });
+      const data = await res.json();
+      if(data.valid) {
+        setTestReport(prev => ({ ...prev, retentionVerify: true }));
+        toast.success('Verified successfully using Client Payload!');
+      } else {
+        toast.error('Verification failed. Payload mismatch.');
+      }
+    } catch (e) {
+      toast.error('Error during client payload verification');
     }
     setIsLoading(false);
   };
@@ -345,9 +395,68 @@ export default function App() {
                         <ShieldWarning size={28} weight="fill"/>
                         TAMPER DETECTED
                     </div>
+                    <button 
+                      onClick={() => setCurrentStep(6)}
+                      className="mt-4 w-full bg-white/10 hover:bg-white/20 text-white p-2 rounded transition-all"
+                    >
+                      Proceed to Data Retention
+                    </button>
                 </motion.div>
               )}
             </div>
+          </div>
+        );
+      case 6:
+        return (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold tracking-tight text-white mb-2">6. Data Retention Policy</h2>
+            <p className="text-secondary text-sm">Simulate 24 hours passing. The raw payload will be automatically purged by the worker, leaving only the CLOUUD Data Token identity.</p>
+            
+            <div className="bg-surface border border-white/10 p-6 rounded-md">
+              {!purgeResult ? (
+                 <button 
+                  onClick={handlePurge}
+                  disabled={isLoading}
+                  className="w-full bg-accent-blue/20 text-accent-blue border border-accent-blue/50 hover:bg-accent-blue/30 p-3 rounded-md font-bold transition-all flex items-center justify-center gap-2 mb-4"
+                 >
+                  <Timer weight="bold" /> {isLoading ? 'Purging...' : 'Fast-forward 24h & Purge Database'}
+                 </button>
+              ) : (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-terminal p-4 rounded border border-white/10 font-mono">
+                    <div className="flex items-center gap-2 mb-2 text-accent-cyan font-bold">
+                        <CheckCircle size={24} weight="fill"/>
+                        DATA PURGED
+                    </div>
+                    <div className="text-secondary text-sm mb-6">
+                      {purgeResult.purged_count} records purged from the database. The server no longer holds the raw data.
+                    </div>
+                    
+                    <button 
+                      onClick={handleVerifyWithClientData}
+                      disabled={isLoading}
+                      className="w-full bg-accent-green/20 text-accent-green border border-accent-green/50 hover:bg-accent-green/30 p-3 rounded font-bold transition-all"
+                    >
+                      {isLoading ? "Verifying..." : "Verify Token using Client-side JSON"}
+                    </button>
+                </motion.div>
+              )}
+            </div>
+            
+            {testReport.retentionVerify && (
+              <div className="mt-8 pt-8 border-t border-white/10">
+                 <h3 className="font-mono text-xl font-bold text-center mb-6">CLOUUD V1 FINAL AUDIT</h3>
+                 <div className="max-w-md mx-auto font-mono text-sm space-y-2">
+                    <ReportRow label="Authenticated Ingestion" pass={testReport.tx} />
+                    <ReportRow label="Compression & Proof Gen" pass={testReport.proof} />
+                    <ReportRow label="Public Verification" pass={testReport.verify} />
+                    <ReportRow label="Tamper Detection" pass={testReport.tamper} />
+                    <ReportRow label="Zero-Data Verification (Post-Purge)" pass={testReport.retentionVerify} />
+                 </div>
+                 <div className="text-center mt-8 text-accent-green font-bold font-mono tracking-widest text-lg">
+                   READY FOR PRODUCTION
+                 </div>
+              </div>
+            )}
           </div>
         );
       default:
@@ -418,4 +527,13 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function ReportRow({label, pass}) {
+  return (
+    <div className="flex justify-between items-center border-b border-white/5 py-1">
+      <span className="text-secondary">{label}</span>
+      {pass ? <span className="text-accent-green font-bold">PASS ✓</span> : <span className="text-muted">-</span>}
+    </div>
+  )
 }

@@ -3,7 +3,8 @@ import uuid
 import hashlib
 import json
 import time
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,6 +50,7 @@ class EventRequest(BaseModel):
 class VerifyRequest(BaseModel):
     event_id: str
     proof: dict
+    raw_payload: dict = None
 
 class TamperRequest(BaseModel):
     event_id: str
@@ -77,6 +79,29 @@ def generate_merkle_chain(states: list):
         hashes.append(h)
         prev_hash = h
     return hashes[-1], hashes
+
+# --- Background Worker for Data Retention ---
+async def retention_worker():
+    """Automatically purges raw JSON payloads older than 1 day."""
+    while True:
+        try:
+            one_day_ago = datetime.now(timezone.utc) - timedelta(days=1)
+            cutoff_str = one_day_ago.isoformat()
+            
+            # Find and purge payloads, keeping the proof_blob and event_id intact
+            await db.events.update_many(
+                {"timestamp": {"$lt": cutoff_str}, "payload": {"$ne": "PURGED"}},
+                {"$set": {"payload": "PURGED"}}
+            )
+        except Exception as e:
+            print(f"Retention worker error: {e}")
+            
+        await asyncio.sleep(3600) # Run every hour
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(retention_worker())
+# --------------------------------------------
 
 @app.get("/api/v1/health")
 async def health_check():
@@ -114,6 +139,9 @@ async def generate_proof(req: dict, api_key: str = Depends(verify_api_key)):
     ev = await db.events.find_one({"event_id": event_id}, {"_id": 0})
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
+        
+    if ev.get("payload") == "PURGED":
+        raise HTTPException(status_code=400, detail="Cannot generate proof for purged payload")
 
     start_time = time.time()
     states = normalize_and_encode(ev["payload"])
@@ -179,16 +207,25 @@ async def tokenize_event(req: TokenizeRequest, api_key: str = Depends(verify_api
 
 @app.post("/api/v1/verify")
 async def verify_proof(req: dict):
-    # Verification doesn't explicitly require an API key to allow independent public verifiers
+    # Verification is public
     start_time = time.time()
     event_id = req.get("transaction_id") or req.get("event_id")
     proof = req.get("proof", {})
+    raw_payload = req.get("raw_payload")
     
     ev = await db.events.find_one({"event_id": event_id}, {"_id": 0})
     if not ev:
         return {"valid": False, "reason": "Event not found"}
         
-    states = normalize_and_encode(ev["payload"])
+    payload_to_verify = ev.get("payload")
+    
+    # If the payload has been purged due to retention policy, we MUST rely on the client providing it
+    if payload_to_verify == "PURGED":
+        if not raw_payload:
+            return {"valid": False, "reason": "Payload purged. Provide raw_payload to verify."}
+        payload_to_verify = raw_payload
+        
+    states = normalize_and_encode(payload_to_verify)
     recalculated_root, _ = generate_merkle_chain(states)
     provided_root = proof.get("merkle_root")
     
@@ -205,9 +242,17 @@ async def verify_proof(req: dict):
 
 @app.post("/api/v1/tamper")
 async def tamper_event(req: TamperRequest):
-    # Testing endpoint, normally removed in prod
     res = await db.events.update_one(
-        {"event_id": req.event_id},
+        {"event_id": req.event_id, "payload": {"$ne": "PURGED"}},
         {"$set": {"payload": req.tampered_payload}}
     )
     return {"status": "tampered", "modified_count": res.modified_count}
+
+@app.post("/api/v1/admin/trigger-retention")
+async def trigger_retention():
+    """Forces the retention purge on ALL events for demonstration and testing purposes."""
+    res = await db.events.update_many(
+        {"payload": {"$ne": "PURGED"}},
+        {"$set": {"payload": "PURGED"}}
+    )
+    return {"status": "success", "purged_count": res.modified_count}

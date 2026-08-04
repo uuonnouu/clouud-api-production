@@ -1,0 +1,17 @@
+{
+  "summary": "Verified data-retention feature end-to-end. Backend admin trigger-retention purges payloads in db.events (sets to 'PURGED'), /verify fails cleanly when purged and raw_payload is missing, and succeeds when the client supplies the matching raw_payload. Frontend Step 6 (Data Retention) UI flows through purge and client-side verify, producing PASS on 'Zero-Data Verification (Post-Purge)' and 'READY FOR PRODUCTION'.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "POST /api/v1/admin/trigger-retention returns {status:success, purged_count:N} and updates db.events payload -> 'PURGED'",
+    "POST /api/v1/verify (post-purge, no raw_payload) returns {valid:false, reason:'Payload purged. Provide raw_payload to verify.'}",
+    "POST /api/v1/verify (post-purge, correct raw_payload) returns valid:true with matching recalculated_root",
+    "POST /api/v1/verify (post-purge, wrong raw_payload) returns valid:false with mismatched roots",
+    "Frontend Step 6: 'Fast-forward 24h & Purge Database' -> DATA PURGED banner with purged_count shown",
+    "Frontend Step 6: 'Verify Token using Client-side JSON' -> success toast + Final Audit table shows PASS on Zero-Data Verification (Post-Purge) and 'READY FOR PRODUCTION'"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
