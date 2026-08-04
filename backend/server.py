@@ -169,7 +169,7 @@ async def tokenize_event(req: TokenizeRequest, api_key: str = Depends(verify_api
         "compression_ratio": ev["proof_blob"]["compression_ratio"],
         "created_at": datetime.now(timezone.utc).isoformat()
     }
-    await db.tokens.insert_one(token_doc)
+    await db.tokens.insert_one(token_doc.copy())
     
     return {
         "status": "minted",

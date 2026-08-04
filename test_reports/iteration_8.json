@@ -1,0 +1,15 @@
+{
+  "summary": "Verified /api/v1/tokenize ObjectId serialization bug fix. Full pipeline (api-key -> events -> proof -> tokenize) executed against public URL.",
+  "tested_scope": ["backend"],
+  "passed": [
+    "GET /api/v1/api-keys returns 200 with api_key",
+    "POST /api/v1/events returns 200 with event_id",
+    "POST /api/v1/proof returns 200 and stores proof_blob",
+    "POST /api/v1/tokenize returns HTTP 200 with clean JSON (no ObjectId serialization error). token_doc.copy() fix works as expected."
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
