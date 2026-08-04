@@ -9,7 +9,7 @@ from .. import core
 from ..compression.analyzer import analyze_content, detect_file_type
 from ..compression.artifact import build_artifact_package
 from ..compression.compressor import compress_bytes
-from ..compression.crypto import generate_merkle_chain, normalize_and_encode
+from ..compression.crypto import generate_merkle_chain, get_sha256, normalize_and_encode
 
 router = APIRouter()
 
@@ -40,6 +40,7 @@ async def compress_upload(
     )
 
     compression = compress_bytes(content)
+    sha256 = get_sha256(content)
 
     proof_input = {
         "artifact_id": artifact_id,
@@ -53,14 +54,13 @@ async def compress_upload(
     merkle_root, hashes = generate_merkle_chain(states)
 
     proof_blob = {
-        "proof_version": "CLOUUD-COMPRESSION-1.0",
         "artifact_id": artifact_id,
+        "sha256": sha256,
         "filename": file.filename,
         "original_size": len(content),
         "algorithm": compression["algorithm"],
         "merkle_root": merkle_root,
         "state_count": len(states),
-        "merkle_chain": hashes,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -92,14 +92,12 @@ async def compress_upload(
             """,
             artifact_id,
             "compress_artifact",
-            json.dumps(
-                {
-                    "filename": file.filename,
-                    "original_size": len(content),
-                    "compressed_size": compression["compressed_size"],
-                    "algorithm": compression["algorithm"],
-                }
-            ),
+            json.dumps({
+                "filename": file.filename,
+                "original_size": len(content),
+                "compressed_size": compression["compressed_size"],
+                "algorithm": compression["algorithm"],
+            }),
             datetime.now(timezone.utc),
             "artifact_created",
             json.dumps(proof_blob),
@@ -118,13 +116,12 @@ async def compress_upload(
         {
             "success": True,
             "artifact_id": artifact_id,
-            "original_filename": file.filename,
+            "filename": file.filename,
             "original_size": len(content),
             "compressed_size": compression["compressed_size"],
             "compression_ratio": compression_ratio,
             "algorithm": compression["algorithm"],
             "artifact_path": str(artifact_dir),
             "proof": proof_blob,
-            "download_url": f"/api/v1/artifacts/{artifact_id}",
         }
     )
