@@ -4,7 +4,8 @@ import hashlib
 import json
 import time
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -28,6 +29,18 @@ DB_NAME = os.environ.get("DB_NAME", "clouud_db")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
+# API Key Security
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if not api_key:
+        raise HTTPException(status_code=401, detail="X-API-Key header is missing")
+    valid_key = await db.api_keys.find_one({"key": api_key})
+    if not valid_key:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+    return api_key
+
 # Models
 class EventRequest(BaseModel):
     event_type: str = "generic_event"
@@ -41,15 +54,15 @@ class TamperRequest(BaseModel):
     event_id: str
     tampered_payload: dict
 
+class TokenizeRequest(BaseModel):
+    event_id: str
+
 def get_sha256(data: str) -> str:
     return hashlib.sha256(data.encode('utf-8')).hexdigest()
 
 def normalize_and_encode(payload: dict) -> list:
-    """Deterministically flattens a JSON payload into an array of semantic states."""
     states = []
-    # Sort keys to guarantee deterministic order
     for k, v in sorted(payload.items()):
-        # In a real engine, this would be a deep structural parse
         val_str = json.dumps(v, sort_keys=True)
         states.append(f"STATE_TRANSITION|{k}|{val_str}")
     if not states:
@@ -57,7 +70,6 @@ def normalize_and_encode(payload: dict) -> list:
     return states
 
 def generate_merkle_chain(states: list):
-    """Generates a sequential hash chain culminating in a root commitment."""
     hashes = []
     prev_hash = ""
     for i, state in enumerate(states):
@@ -70,10 +82,15 @@ def generate_merkle_chain(states: list):
 async def health_check():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-# Accepting both /transactions and /events to support all user curl commands
+@app.get("/api/v1/api-keys")
+async def create_api_key():
+    key = "cld_" + str(uuid.uuid4()).replace("-", "")
+    await db.api_keys.insert_one({"key": key, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"api_key": key}
+
 @app.post("/api/v1/transactions")
 @app.post("/api/v1/events")
-async def ingest_event(req: EventRequest):
+async def ingest_event(req: EventRequest, api_key: str = Depends(verify_api_key)):
     event_id = str(uuid.uuid4())
     doc = {
         "event_id": event_id,
@@ -85,29 +102,23 @@ async def ingest_event(req: EventRequest):
     }
     await db.events.insert_one(doc)
     return {
-        "transaction_id": event_id,  # Returned as transaction_id for curl compatibility
+        "transaction_id": event_id,
         "event_id": event_id,
         "status": "ingested",
         "timestamp": doc["timestamp"]
     }
 
 @app.post("/api/v1/proof")
-async def generate_proof(req: dict):
-    # Support both transaction_id and event_id from incoming request
+async def generate_proof(req: dict, api_key: str = Depends(verify_api_key)):
     event_id = req.get("transaction_id") or req.get("event_id")
     ev = await db.events.find_one({"event_id": event_id}, {"_id": 0})
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
 
     start_time = time.time()
-
-    # 1. State Normalization & CLOUUD Encoder
     states = normalize_and_encode(ev["payload"])
-    
-    # 2. Hash Generation & Merkle Commitment
     root_hash, hashes = generate_merkle_chain(states)
     
-    # 3. Compressed Proof Artifact
     payload_str = json.dumps(ev["payload"])
     original_size = len(payload_str)
     
@@ -144,10 +155,32 @@ async def generate_proof(req: dict):
         "processing_time_ms": processing_time_ms
     }
 
+@app.post("/api/v1/tokenize")
+async def tokenize_event(req: TokenizeRequest, api_key: str = Depends(verify_api_key)):
+    ev = await db.events.find_one({"event_id": req.event_id}, {"_id": 0})
+    if not ev or not ev.get("proof_blob"):
+        raise HTTPException(status_code=400, detail="Proof must be generated before tokenizing")
+        
+    token_id = f"CLOUUD-DATA-{get_sha256(req.event_id)[:8].upper()}"
+    token_doc = {
+        "token_id": token_id,
+        "event_id": req.event_id,
+        "merkle_root": ev["proof_blob"]["merkle_root"],
+        "compression_ratio": ev["proof_blob"]["compression_ratio"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.tokens.insert_one(token_doc)
+    
+    return {
+        "status": "minted",
+        "token_id": token_id,
+        "token_metadata": token_doc
+    }
+
 @app.post("/api/v1/verify")
 async def verify_proof(req: dict):
+    # Verification doesn't explicitly require an API key to allow independent public verifiers
     start_time = time.time()
-    
     event_id = req.get("transaction_id") or req.get("event_id")
     proof = req.get("proof", {})
     
@@ -155,15 +188,11 @@ async def verify_proof(req: dict):
     if not ev:
         return {"valid": False, "reason": "Event not found"}
         
-    # The true test of integrity: Re-run the encoder on the CURRENT database payload
-    # If the payload was tampered with, the generated root will not match the proof root.
     states = normalize_and_encode(ev["payload"])
     recalculated_root, _ = generate_merkle_chain(states)
-    
     provided_root = proof.get("merkle_root")
     
     is_valid = (recalculated_root == provided_root)
-    
     verification_time_ms = round((time.time() - start_time) * 1000, 2)
     
     return {
@@ -176,6 +205,7 @@ async def verify_proof(req: dict):
 
 @app.post("/api/v1/tamper")
 async def tamper_event(req: TamperRequest):
+    # Testing endpoint, normally removed in prod
     res = await db.events.update_one(
         {"event_id": req.event_id},
         {"$set": {"payload": req.tampered_payload}}

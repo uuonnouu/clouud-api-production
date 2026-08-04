@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   CheckCircle, Play, ShieldCheck, Hexagon, Database, 
-  TerminalWindow, CaretRight, ShieldWarning, FileText, Cpu, Code
+  ShieldWarning, FileText, Cpu, Key, IdentificationCard
 } from '@phosphor-icons/react';
 import { Toaster, toast } from 'sonner';
 
@@ -11,8 +11,9 @@ const API_URL = process.env.REACT_APP_BACKEND_URL + "/api/v1";
 const Steps = [
   { id: 1, title: 'JSON Event Input', icon: FileText },
   { id: 2, title: 'Compression & Proof', icon: Cpu },
-  { id: 3, title: 'Verification', icon: ShieldCheck },
-  { id: 4, title: 'Tamper Test', icon: ShieldWarning }
+  { id: 3, title: 'Token Minting', icon: IdentificationCard },
+  { id: 4, title: 'Verification', icon: ShieldCheck },
+  { id: 5, title: 'Tamper Test', icon: ShieldWarning }
 ];
 
 export default function App() {
@@ -26,12 +27,33 @@ export default function App() {
   
   const [eventId, setEventId] = useState(null);
   const [proofData, setProofData] = useState(null);
+  const [tokenData, setTokenData] = useState(null);
   const [verifyResult, setVerifyResult] = useState(null);
   const [tamperVerifyResult, setTamperVerifyResult] = useState(null);
+  
   const [isLoading, setIsLoading] = useState(false);
-  const [testReport, setTestReport] = useState({});
+  const [apiKey, setApiKey] = useState("");
+
+  const getHeaders = () => {
+    return {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey
+    };
+  };
+
+  const handleGenerateKey = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api-keys`);
+      const data = await res.json();
+      setApiKey(data.api_key);
+      toast.success('API Key generated successfully');
+    } catch (e) {
+      toast.error('Failed to generate API Key');
+    }
+  };
 
   const handleCreateEvent = async () => {
+    if (!apiKey) { toast.error("Please generate an API Key first."); return; }
     setIsLoading(true);
     try {
       let parsedPayload;
@@ -40,16 +62,17 @@ export default function App() {
 
       const res = await fetch(`${API_URL}/events`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({ event_type: "transaction", payload: parsedPayload })
       });
+      if (res.status === 401 || res.status === 403) throw new Error("Unauthorized: Invalid API Key");
+      
       const data = await res.json();
       setEventId(data.event_id);
-      setTestReport(prev => ({ ...prev, tx: true }));
-      toast.success('Event Stored in DB');
+      toast.success('Event Stored Securely');
       setCurrentStep(2);
     } catch (e) {
-      toast.error('Failed to ingest event');
+      toast.error(e.message || 'Failed to ingest event');
     }
     setIsLoading(false);
   };
@@ -59,16 +82,35 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/proof`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({ event_id: eventId })
       });
+      if (!res.ok) throw new Error("Failed to generate proof");
       const data = await res.json();
       setProofData(data);
-      setTestReport(prev => ({ ...prev, capture: true, compress: true, proof: true, persist: true }));
       toast.success('CLOUUD Proof Generated');
       setCurrentStep(3);
     } catch (e) {
-      toast.error('Failed to generate proof');
+      toast.error(e.message);
+    }
+    setIsLoading(false);
+  };
+
+  const handleTokenize = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/tokenize`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ event_id: eventId })
+      });
+      if (!res.ok) throw new Error("Failed to mint token");
+      const data = await res.json();
+      setTokenData(data);
+      toast.success('CLOUUD Token Minted!');
+      setCurrentStep(4);
+    } catch (e) {
+      toast.error(e.message);
     }
     setIsLoading(false);
   };
@@ -78,7 +120,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' }, // Public endpoint
         body: JSON.stringify({ 
           event_id: eventId, 
           proof: proofData.proof
@@ -87,9 +129,8 @@ export default function App() {
       const data = await res.json();
       setVerifyResult(data);
       if(data.valid) {
-        setTestReport(prev => ({ ...prev, verify: true }));
         toast.success('Integrity Verified');
-        setCurrentStep(4);
+        setCurrentStep(5);
       } else {
         toast.error('Verification Failed');
       }
@@ -103,13 +144,12 @@ export default function App() {
     setIsLoading(true);
     try {
       let tampered = JSON.parse(payloadText);
-      // Mutate
       if (tampered.amount) tampered.amount = 9999;
       else tampered.tampered = true;
       
       await fetch(`${API_URL}/tamper`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' }, // Testing endpoint
         body: JSON.stringify({ event_id: eventId, tampered_payload: tampered })
       });
       toast.warning('Database Payload Tampered!');
@@ -117,18 +157,11 @@ export default function App() {
       const res = await fetch(`${API_URL}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          event_id: eventId, 
-          proof: proofData.proof
-        })
+        body: JSON.stringify({ event_id: eventId, proof: proofData.proof })
       });
       const data = await res.json();
       setTamperVerifyResult(data);
-      
-      if(!data.valid) {
-        setTestReport(prev => ({ ...prev, tamper: true }));
-        toast.success('Tamper Successfully Detected!');
-      }
+      if(!data.valid) toast.success('Tamper Successfully Detected!');
     } catch (e) {
       toast.error('Error during tamper test');
     }
@@ -140,26 +173,44 @@ export default function App() {
       case 1:
         return (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">1. JSON Event Input</h2>
-            <p className="text-secondary text-sm">Create a data event/transaction to be processed.</p>
+            <h2 className="text-2xl font-bold tracking-tight text-white mb-2">1. Authenticated Ingestion</h2>
+            <p className="text-secondary text-sm">Create a data event securely with an API Key.</p>
             
             <div className="bg-surface border border-white/10 p-6 rounded-md space-y-4">
+              <div className="flex gap-4 items-end">
+                <div className="flex-1">
+                  <label className="uppercase tracking-[0.2em] text-xs font-bold text-muted block mb-2">X-API-Key</label>
+                  <input 
+                    type="text" 
+                    value={apiKey} 
+                    onChange={e => setApiKey(e.target.value)}
+                    placeholder="Generate or paste key"
+                    className="w-full bg-background border border-white/10 p-3 rounded text-accent-yellow font-mono text-sm outline-none"
+                  />
+                </div>
+                <button 
+                  onClick={handleGenerateKey}
+                  className="bg-accent-yellow/10 text-accent-yellow border border-accent-yellow/30 px-4 py-3 rounded hover:bg-accent-yellow/20 font-bold transition-all whitespace-nowrap"
+                >
+                  Generate Key
+                </button>
+              </div>
+
               <div>
                 <label className="uppercase tracking-[0.2em] text-xs font-bold text-muted block mb-2">Transaction Payload (JSON)</label>
                 <textarea 
-                  rows={8}
+                  rows={6}
                   value={payloadText} 
                   onChange={e => setPayloadText(e.target.value)}
-                  className="w-full bg-terminal border border-white/10 p-3 rounded text-accent-cyan focus:ring-1 focus:ring-accent-cyan outline-none transition-colors font-mono text-sm resize-none"
+                  className="w-full bg-terminal border border-white/10 p-3 rounded text-accent-cyan font-mono text-sm resize-none outline-none"
                 />
               </div>
               <button 
                 onClick={handleCreateEvent}
                 disabled={isLoading}
-                data-testid="btn-create-event"
                 className="w-full bg-accent-blue/10 hover:bg-accent-blue/20 text-accent-blue border border-accent-blue/30 p-3 rounded-md font-bold transition-all flex items-center justify-center gap-2"
               >
-                {isLoading ? 'Storing...' : 'Store Transaction Event'} <Play weight="fill" />
+                {isLoading ? 'Storing...' : 'Secure Store Event'} <Play weight="fill" />
               </button>
             </div>
           </div>
@@ -167,24 +218,20 @@ export default function App() {
       case 2:
         return (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">2. Compression & Proof</h2>
-            <p className="text-secondary text-sm">Deterministic state normalization and Merkle hashing.</p>
+            <h2 className="text-2xl font-bold tracking-tight text-white mb-2">2. Compression & Proof</h2>
+            <p className="text-secondary text-sm">Deterministic state normalization requiring API Key access.</p>
             
-            <div className="bg-terminal border border-white/10 p-6 rounded-md font-mono text-sm relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-accent-cyan to-accent-pink opacity-50"></div>
-              
+            <div className="bg-terminal border border-white/10 p-6 rounded-md font-mono text-sm relative">
               {!proofData ? (
                  <button 
                   onClick={handleGenerateProof}
                   disabled={isLoading}
-                  data-testid="btn-generate-proof"
                   className="bg-primary text-background hover:bg-white/90 p-3 rounded-md font-bold transition-all w-full mt-4 flex justify-center items-center gap-2"
                 >
                   <Cpu weight="bold" /> {isLoading ? 'Generating Proof...' : 'Run Local Proof Engine'}
                 </button>
               ) : (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                  
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
                   <div>
                     <h3 className="text-accent-pink uppercase tracking-[0.2em] text-xs font-bold mb-2">Normalized States</h3>
                     {proofData.states.map((s, i) => (
@@ -194,27 +241,8 @@ export default function App() {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div className="bg-surface p-4 rounded border border-white/10">
-                      <div className="text-muted text-xs uppercase tracking-wider mb-2">Original Size</div>
-                      <div className="text-primary font-bold">{proofData.original_size} B</div>
-                    </div>
-                    <div className="bg-surface p-4 rounded border border-white/10">
-                      <div className="text-muted text-xs uppercase tracking-wider mb-2">Proof Size</div>
-                      <div className="text-accent-green font-bold">{proofData.proof_size} B</div>
-                    </div>
-                    <div className="bg-surface p-4 rounded border border-white/10">
-                      <div className="text-muted text-xs uppercase tracking-wider mb-2">Ratio</div>
-                      <div className="text-accent-cyan font-bold">{(proofData.compression_ratio * 100).toFixed(2)}%</div>
-                    </div>
-                    <div className="bg-surface p-4 rounded border border-white/10">
-                      <div className="text-muted text-xs uppercase tracking-wider mb-2">Time</div>
-                      <div className="text-accent-yellow font-bold">{proofData.processing_time_ms} ms</div>
-                    </div>
-                  </div>
-
-                  <div className="border border-white/10 bg-white/5 p-4 rounded-md flex flex-col gap-2">
-                    <div className="text-muted text-xs uppercase tracking-[0.2em]">Merkle Root</div>
+                  <div className="border border-white/10 bg-white/5 p-4 rounded-md">
+                    <div className="text-muted text-xs uppercase tracking-[0.2em] mb-1">Merkle Root</div>
                     <div className="text-primary truncate text-accent-pink">{proofData.merkle_root}</div>
                   </div>
 
@@ -222,25 +250,55 @@ export default function App() {
                     onClick={() => setCurrentStep(3)}
                     className="w-full bg-accent-yellow/20 text-accent-yellow border border-accent-yellow/50 p-3 rounded-md font-bold hover:bg-accent-yellow/30 transition-all flex justify-center items-center gap-2"
                   >
-                    Proceed to Verification
+                    Proceed to Tokenization
                   </button>
-
                 </motion.div>
               )}
             </div>
           </div>
         );
       case 3:
+         return (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold tracking-tight text-white mb-2">3. Token Minting</h2>
+            <p className="text-secondary text-sm">Abstract verified proofs into local CLOUUD Data Tokens.</p>
+
+            <div className="bg-surface border border-white/10 p-6 rounded-md">
+              {!tokenData ? (
+                 <button 
+                  onClick={handleTokenize}
+                  disabled={isLoading}
+                  className="bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/50 hover:bg-accent-cyan/30 p-3 rounded-md font-bold transition-all w-full flex justify-center items-center gap-2"
+                >
+                  <IdentificationCard weight="bold" /> {isLoading ? 'Minting...' : 'Mint Data Token'}
+                </button>
+              ) : (
+                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-6">
+                    <IdentificationCard size={64} className="mx-auto text-accent-cyan mb-4" />
+                    <h3 className="text-2xl font-bold text-white mb-2">{tokenData.token_id}</h3>
+                    <div className="text-accent-cyan font-mono text-sm tracking-widest mb-6">CLOUUD DATA TOKEN</div>
+                    
+                    <button 
+                      onClick={() => setCurrentStep(4)}
+                      className="w-full bg-white/10 hover:bg-white/20 text-white p-3 rounded-md font-bold transition-all"
+                    >
+                      Proceed to Verification
+                    </button>
+                 </motion.div>
+              )}
+            </div>
+          </div>
+         );
+      case 4:
         return (
           <div className="space-y-6">
-             <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">3. Verification</h2>
-             <p className="text-secondary text-sm">Recalculates state hashes to ensure the database payload perfectly matches the proof commitment.</p>
+             <h2 className="text-2xl font-bold tracking-tight text-white mb-2">4. Public Verification</h2>
+             <p className="text-secondary text-sm">Independent recalculation of state hashes (No API Key Required).</p>
 
-             <div className="bg-terminal border border-white/10 p-6 rounded-md space-y-4">
+             <div className="bg-terminal border border-white/10 p-6 rounded-md">
                 <button 
                   onClick={handleVerify}
                   disabled={isLoading}
-                  data-testid="btn-verify-proof"
                   className="w-full bg-accent-green/20 text-accent-green border border-accent-green/50 hover:bg-accent-green/30 p-3 rounded-md font-bold transition-all flex justify-center items-center gap-2"
                 >
                   <ShieldCheck weight="bold" /> {isLoading ? 'Verifying...' : 'Verify Data Integrity'}
@@ -255,11 +313,8 @@ export default function App() {
                           <div className="text-secondary text-xs">Root hashes match perfectly.</div>
                         </div>
                      </div>
-                     <div className="space-y-2 text-sm">
-                       <div className="flex justify-between"><span className="text-muted">Verification Time:</span><span className="text-primary">{verifyResult.verification_time_ms} ms</span></div>
-                     </div>
                      <button 
-                      onClick={() => setCurrentStep(4)}
+                      onClick={() => setCurrentStep(5)}
                       className="mt-4 w-full bg-white/10 hover:bg-white/20 text-white p-2 rounded transition-all"
                      >
                         Run Tamper Test
@@ -269,17 +324,16 @@ export default function App() {
              </div>
           </div>
         );
-      case 4:
+      case 5:
         return (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold tracking-tight text-white mb-2" data-testid="step-title">4. Tamper Test</h2>
+            <h2 className="text-2xl font-bold tracking-tight text-white mb-2">5. Tamper Test</h2>
             <p className="text-secondary text-sm">Simulate a database breach by modifying the payload directly.</p>
 
             <div className="bg-surface border border-accent-pink/30 p-6 rounded-md">
               <button 
                 onClick={handleTamper}
                 disabled={isLoading}
-                data-testid="btn-tamper-test"
                 className="w-full bg-accent-pink/20 text-accent-pink border border-accent-pink/50 hover:bg-accent-pink/30 p-3 rounded-md font-bold transition-all mb-4"
               >
                 {isLoading ? 'Running...' : 'Modify Payload & Verify'}
@@ -291,36 +345,9 @@ export default function App() {
                         <ShieldWarning size={28} weight="fill"/>
                         TAMPER DETECTED
                     </div>
-                    <div className="space-y-3 text-sm">
-                       <div>
-                         <div className="text-muted text-xs uppercase mb-1">Expected Root (Proof)</div>
-                         <div className="text-primary truncate">{tamperVerifyResult.provided_root}</div>
-                       </div>
-                       <div>
-                         <div className="text-muted text-xs uppercase mb-1">Recalculated Root (DB)</div>
-                         <div className="text-accent-pink truncate">{tamperVerifyResult.recalculated_root}</div>
-                       </div>
-                    </div>
                 </motion.div>
               )}
             </div>
-
-            {testReport.tamper && (
-              <div className="mt-8 pt-8 border-t border-white/10">
-                 <h3 className="font-mono text-xl font-bold text-center mb-6">CLOUUD E2E VALIDATION REPORT</h3>
-                 <div className="max-w-md mx-auto font-mono text-sm space-y-2">
-                    <ReportRow label="Transaction Creation" pass={testReport.tx} />
-                    <ReportRow label="State Normalization" pass={testReport.capture} />
-                    <ReportRow label="Compression / Proof Gen" pass={testReport.proof} />
-                    <ReportRow label="Independent Verification" pass={testReport.verify} />
-                    <ReportRow label="Tamper Detection" pass={testReport.tamper} />
-                 </div>
-                 <div className="text-center mt-8 text-accent-green font-bold font-mono tracking-widest text-lg">
-                   LOCAL PIPELINE OPERATIONAL
-                 </div>
-              </div>
-            )}
-
           </div>
         );
       default:
@@ -337,11 +364,9 @@ export default function App() {
           <div className="font-mono font-bold text-xl tracking-tighter flex items-center gap-2">
             <Hexagon weight="fill" className="text-accent-cyan" /> CLOUUD.
           </div>
-          <div className="flex gap-4">
-            <span className="text-xs font-bold tracking-widest uppercase text-secondary border border-white/10 px-2 py-1 rounded bg-white/5">
-              Local Deterministic Engine
-            </span>
-          </div>
+          <span className="text-xs font-bold tracking-widest uppercase text-secondary border border-white/10 px-2 py-1 rounded bg-white/5">
+            Production Ready Core
+          </span>
         </div>
       </header>
 
@@ -393,13 +418,4 @@ export default function App() {
       </main>
     </div>
   );
-}
-
-function ReportRow({label, pass}) {
-  return (
-    <div className="flex justify-between items-center border-b border-white/5 py-1">
-      <span className="text-secondary">{label}</span>
-      {pass ? <span className="text-accent-green font-bold">PASS ✓</span> : <span className="text-muted">-</span>}
-    </div>
-  )
 }

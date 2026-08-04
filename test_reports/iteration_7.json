@@ -1,0 +1,30 @@
+{
+  "summary": "Tested API-Key middleware across /events, /proof, /tokenize; verified /verify remains public; frontend Step 1 Generate Key confirmed. Tokenize endpoint returns 500 due to ObjectId serialization bug.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "GET /api/v1/health -> 200",
+    "GET /api/v1/api-keys -> returns api_key prefixed with cld_",
+    "POST /api/v1/events without X-API-Key -> 401 (missing header)",
+    "POST /api/v1/events with invalid key -> 403",
+    "POST /api/v1/events with valid key -> 200 (event_id returned)",
+    "POST /api/v1/proof without X-API-Key -> 401",
+    "POST /api/v1/proof with valid key -> 200 (merkle_root generated)",
+    "POST /api/v1/tokenize without X-API-Key -> 401",
+    "POST /api/v1/verify without any key -> 200 valid:true (public verification works)",
+    "Frontend: 'Generate Key' button calls /api-keys, populates X-API-Key input with cld_... value, toast success shown"
+  ],
+  "failed": [
+    {
+      "area": "POST /api/v1/tokenize (backend)",
+      "issue": "Endpoint returns 500 Internal Server Error even with a valid X-API-Key. Motor's insert_one mutates token_doc in-place adding an ObjectId `_id`, which is then included via `token_metadata: token_doc` in the response and cannot be JSON-serialized by FastAPI.",
+      "evidence": "Backend traceback: `ValueError: [TypeError(\"'ObjectId' object is not iterable\"), TypeError('vars() argument must have __dict__ attribute')]` in fastapi/encoders.py during serialize_response. Reproduced via curl POST /api/v1/tokenize with valid key -> 'Internal Server Error'.",
+      "priority": "HIGH"
+    }
+  ],
+  "action_items": [
+    "Fix /api/v1/tokenize: before inserting, either pop `_id` after insert (`token_doc.pop('_id', None)`) or build the response dict separately, or return `token_doc` via a Pydantic model with `_id` excluded. Example fix: `await db.tokens.insert_one(token_doc.copy())` or delete `_id` after insert before returning. This blocks the Token Minting wizard step end-to-end."
+  ],
+  "success_rate": {"backend": "83%", "frontend": "100% (Step 1 only tested)"},
+  "retest_needed": true,
+  "full_testing_deferred": true
+}
