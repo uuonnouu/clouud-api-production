@@ -10,19 +10,15 @@ from typing import Optional
 
 import asyncpg
 from fastapi import FastAPI, HTTPException, Depends, Security
-from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, model_validator
-from dotenv import load_dotenv
 
-load_dotenv()
-
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://localhost:5432/clouud")
-ADMIN_KEY = os.environ.get("ADMIN_KEY", "")
-API_KEY_NAME = "X-API-Key"
-ADMIN_KEY_NAME = "X-Admin-Key"
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
-admin_key_header = APIKeyHeader(name=ADMIN_KEY_NAME, auto_error=False)
+# All shared auth/db state (DATABASE_URL, ADMIN_KEY, pool, get_sha256,
+# verify_api_key, verify_admin_key) lives in .core. The compression/artifacts
+# routers under .api also depend on .core rather than on this module, so
+# there's no import cycle between server.py and the routers it mounts.
+from . import core
+from .core import DATABASE_URL, ADMIN_KEY, get_sha256, verify_api_key, verify_admin_key
 
 pool: Optional[asyncpg.pool.Pool] = None
 
@@ -31,6 +27,7 @@ pool: Optional[asyncpg.pool.Pool] = None
 async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DATABASE_URL)
+    core.pool = pool  # keep the shared module's pool reference in sync
     async with pool.acquire() as connection:
         await init_db(connection)
     retention_task = asyncio.create_task(retention_worker())
@@ -40,6 +37,7 @@ async def lifespan(app: FastAPI):
         retention_task.cancel()
         if pool is not None:
             await pool.close()
+        core.pool = None
 
 
 app = FastAPI(title="CLOUUD Local Proof Pipeline API", lifespan=lifespan)
@@ -51,10 +49,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def get_sha256(data: str) -> str:
-    return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 def normalize_and_encode(payload: dict) -> list:
@@ -128,23 +122,8 @@ async def retention_worker() -> None:
 
 
 
-async def verify_api_key(api_key: str = Depends(api_key_header)) -> str:
-    if not api_key:
-        raise HTTPException(status_code=401, detail="X-API-Key header is missing")
-    if pool is None:
-        raise HTTPException(status_code=500, detail="Database connection is not available")
-    row = await pool.fetchrow("SELECT key, revoked FROM api_keys WHERE key = $1", api_key)
-    if not row or row["revoked"]:
-        raise HTTPException(status_code=403, detail="Invalid or revoked API Key")
-    return api_key
-
-
-async def verify_admin_key(admin_key: str = Depends(admin_key_header)) -> str:
-    if not ADMIN_KEY:
-        raise HTTPException(status_code=500, detail="Admin key is not configured")
-    if not admin_key or admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin key")
-    return admin_key
+# verify_api_key / verify_admin_key come from .core (imported above) so the
+# compression/artifacts routers share the exact same auth logic and pool.
 
 
 class EventRequest(BaseModel):
@@ -177,6 +156,14 @@ class TamperRequest(BaseModel):
 
 class TokenizeRequest(BaseModel):
     event_id: str
+
+
+# Compression / artifact routers depend back on verify_api_key and pool
+# above, so they're imported and mounted only after both exist.
+from .api import compression_router, artifacts_router  # noqa: E402
+
+app.include_router(compression_router, prefix="/api/v1", tags=["compression"])
+app.include_router(artifacts_router, prefix="/api/v1", tags=["artifacts"])
 
 
 @app.get("/api/v1/health")

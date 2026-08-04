@@ -4,22 +4,22 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
-from backend.compression.analyzer import analyze_content, detect_file_type
-from backend.compression.compressor import compress_bytes
-from backend.compression.artifact import build_artifact_package, artifact_storage_dir
-from backend.compression.crypto import get_sha256, normalize_and_encode, generate_merkle_chain
-from backend.server import verify_api_key, pool
+from ..compression.analyzer import analyze_content, detect_file_type
+from ..compression.compressor import compress_bytes
+from ..compression.artifact import build_artifact_package, artifact_storage_dir
+from ..compression.crypto import get_sha256, normalize_and_encode, generate_merkle_chain
+from .. import core
 
 router = APIRouter()
 
 
 @router.post("/compress")
-async def compress_upload(file: UploadFile = File(...), api_key: str = Depends(verify_api_key)):
+async def compress_upload(file: UploadFile = File(...), api_key: str = Depends(core.verify_api_key)):
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    file_type = detect_file_type(file.filename or file.filename, content)
+    file_type = detect_file_type(file.filename or "uploaded.file", content)
     analysis = analyze_content(content, file_type)
     compression = compress_bytes(content)
     artifact_id = str(uuid.uuid4())
@@ -54,8 +54,8 @@ async def compress_upload(file: UploadFile = File(...), api_key: str = Depends(v
         proof_blob=proof_blob,
     )
 
-    if pool is not None:
-        await pool.execute(
+    if core.pool is not None:
+        await core.pool.execute(
             "INSERT INTO events (event_id, event_type, payload, timestamp, status, proof_blob, purged) VALUES ($1, $2, $3, $4, $5, $6, FALSE)",
             artifact_id,
             "compress_artifact",

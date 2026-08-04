@@ -1,0 +1,96 @@
+name: Backend Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python -m pytest tests -v
+
+  api-smoke-test:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: clouud
+          POSTGRES_PASSWORD: clouud
+          POSTGRES_DB: clouud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clouud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clouud:clouud@localhost:5432/clouud
+      ADMIN_KEY: ci-admin-key
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Boot the API against real Postgres
+        working-directory: backend
+        run: |
+          uvicorn server:app --host 0.0.0.0 --port 8000 &
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8000/api/v1/health && break
+            sleep 1
+          done
+          curl -sf http://localhost:8000/api/v1/health
+
+      - name: Exercise real API flow (admin key -> issue key -> ingest -> proof -> verify -> compress -> download)
+        run: |
+          set -e
+          API_KEY=$(curl -sf -H "X-Admin-Key: ci-admin-key" http://localhost:8000/api/v1/api-keys | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
+
+          EVENT=$(curl -sf -X POST http://localhost:8000/api/v1/events \
+            -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+            -d '{"event_type": "ci_smoke", "payload": {"hello": "world"}}')
+          EVENT_ID=$(echo "$EVENT" | python3 -c "import sys,json; print(json.load(sys.stdin)['event_id'])")
+
+          PROOF=$(curl -sf -X POST http://localhost:8000/api/v1/proof \
+            -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+            -d "{\"event_id\": \"$EVENT_ID\"}")
+          echo "$PROOF" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['merkle_root']; print('proof ok:', d['merkle_root'])"
+
+          VERIFY=$(curl -sf -X POST http://localhost:8000/api/v1/verify \
+            -H "Content-Type: application/json" \
+            -d "{\"event_id\": \"$EVENT_ID\", \"proof\": $(echo $PROOF | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)["proof"]))')}")
+          echo "$VERIFY" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['valid'] is True, d"
+
+          echo '{"sample": "data", "n": 12345}' > /tmp/sample.json
+          COMPRESS=$(curl -sf -X POST http://localhost:8000/api/v1/compress \
+            -H "X-API-Key: $API_KEY" -F "file=@/tmp/sample.json")
+          ARTIFACT_ID=$(echo "$COMPRESS" | python3 -c "import sys,json; print(json.load(sys.stdin)['artifact_id'])")
+          echo "compress ok: $ARTIFACT_ID"
+
+          curl -sf -H "X-API-Key: $API_KEY" -o /tmp/downloaded.bin \
+            "http://localhost:8000/api/v1/artifacts/$ARTIFACT_ID"
+          echo "download ok, bytes: $(wc -c < /tmp/downloaded.bin)"
