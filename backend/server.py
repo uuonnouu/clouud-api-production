@@ -179,6 +179,32 @@ from .api import compression_router, artifacts_router  # noqa: E402
 app.include_router(compression_router, prefix="/api/v1", tags=["compression"])
 app.include_router(artifacts_router, prefix="/api/v1", tags=["artifacts"])
 
+# UUON Engine layer — REST router + WebSocket streaming + OpenAPI manifest
+from .engines.router import router as engine_router                # noqa: E402
+from .engines.openapi_manifest import router as manifest_router    # noqa: E402
+from .engines.socket import engine_websocket                       # noqa: E402
+
+app.include_router(engine_router, prefix="/api/v1", tags=["engines"])
+app.include_router(manifest_router, prefix="/api/v1", tags=["plugin"])
+
+# WebSocket routes — one per engine, all share the same handler
+from fastapi import WebSocket  # noqa: E402
+from .engines.registry import ENGINES  # noqa: E402
+
+for _eid in ENGINES:
+    # FastAPI doesn't support dynamic websocket_route in a loop directly,
+    # so we register each path explicitly using a closure.
+    def _make_ws_handler(eid: str):
+        async def _handler(websocket: WebSocket):
+            await engine_websocket(websocket, eid)
+        _handler.__name__ = f"ws_engine_{eid.replace('-', '_')}"
+        return _handler
+
+    app.add_api_websocket_route(
+        f"/ws/engines/{_eid}",
+        _make_ws_handler(_eid),
+    )
+
 
 @app.get("/api/v1/health")
 async def health_check() -> dict:
@@ -226,8 +252,7 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
         raise HTTPException(status_code=404, detail="Event not found")
     if ev["purged"]:
         raise HTTPException(status_code=400, detail="Cannot generate proof for purged payload")
-    raw_payload = ev["payload"] or {}
-    payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload)
+    payload = ev["payload"] or {}
     start_time = time.time()
     states = normalize_and_encode(payload)
     root_hash, hashes = generate_merkle_chain(states)
@@ -242,11 +267,11 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     compressed_size = len(json.dumps(proof_blob))
-    compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > 0 else 0.0
+    compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > compressed_size else 0.0
     proof_blob["compression_ratio"] = compression_ratio
     await pool.execute(
         "UPDATE events SET proof_blob = $1 WHERE event_id = $2",
-        json.dumps(proof_blob),
+        proof_blob,
         event_id,
     )
     processing_time_ms = round((time.time() - start_time) * 1000, 2)
@@ -269,17 +294,16 @@ async def tokenize_event(req: TokenizeRequest, api_key: str = Depends(verify_api
     ev = await pool.fetchrow("SELECT event_id, proof_blob FROM events WHERE event_id = $1", req.event_id)
     if not ev or not ev["proof_blob"]:
         raise HTTPException(status_code=400, detail="Proof must be generated before tokenizing")
-    proof_blob = ev["proof_blob"] if isinstance(ev["proof_blob"], dict) else json.loads(ev["proof_blob"])
     token_id = f"CLOUUD-DATA-{get_sha256(req.event_id)[:8].upper()}"
     token_doc = {
         "token_id": token_id,
         "event_id": req.event_id,
-        "merkle_root": proof_blob.get("merkle_root"),
-        "compression_ratio": proof_blob.get("compression_ratio"),
+        "merkle_root": ev["proof_blob"]["merkle_root"],
+        "compression_ratio": ev["proof_blob"]["compression_ratio"],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await pool.execute(
-        "INSERT INTO tokens (token_id, event_id, merkle_root, compression_ratio, created_at) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (token_id) DO UPDATE SET merkle_root = EXCLUDED.merkle_root, compression_ratio = EXCLUDED.compression_ratio",
+        "INSERT INTO tokens (token_id, event_id, merkle_root, compression_ratio, created_at) VALUES ($1, $2, $3, $4, $5)",
         token_doc["token_id"],
         req.event_id,
         token_doc["merkle_root"],
