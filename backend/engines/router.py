@@ -1,17 +1,9 @@
 """
-UUON Engine REST Router
-POST /api/v1/engines/{engine_id}    — submit P-vector, get output + provenance envelope
-GET  /api/v1/engines                — list all registered engines
-GET  /api/v1/engines/{engine_id}    — describe one engine (schema, terminals, upstream)
-
-Each response carries:
-  - output:      the engine computation result
-  - provenance:  { engine_id, layer, p_vector, sha256_seed, usal_1_0, utc_timestamp }
-  - proof:       Merkle root of the P-vector state (reuses ecoPsystem proof chain)
+UUON Engine REST Router — writes to engine_runs, provenance_chain, engine_registry
+F=(P,E,M,R,C) · USAL-1.0 · Phillip Aguilar Ruiz III / UUON Foundation Inc.
 """
-
-import json
-import uuid
+import json, uuid, subprocess, shutil, time
+from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -21,260 +13,130 @@ from .. import core
 from ..compression.crypto import get_sha256, normalize_and_encode, generate_merkle_chain
 from .registry import ENGINES, get_engine, list_engines
 
+_ENGINES_DIR = Path(__file__).parent
+_SEED_RUNNER = _ENGINES_DIR / "run_seed.js"
+_NODE_BIN    = shutil.which("node") or shutil.which("nodejs") or "node"
+
 router = APIRouter()
-
-
-# ── Models ────────────────────────────────────────────────────────────────────
 
 class EngineRequest(BaseModel):
     p_vector: dict
-    output_format: str = "json"  # json | glb | svg — engine honours what it can
+    output_format: str = "json"
+    width: int = 800
+    height: int = 800
 
+def build_provenance(engine, p_vector, request_id):
+    sha = get_sha256(json.dumps(p_vector, sort_keys=True))
+    return {"request_id": request_id, "engine_id": engine["id"], "engine_name": engine["name"],
+            "layer": engine["layer"], "bio": engine["bio"], "framework": "F=(P,E,M,R,C)",
+            "p_vector_sha256": sha, "usal_1_0": "UUON-Foundation/USAL-1.0",
+            "author": "Phillip Aguilar Ruiz III / UUON Foundation Inc.",
+            "utc_timestamp": datetime.now(timezone.utc).isoformat(),
+            "upstream": engine.get("upstream"), "npm": engine.get("npm")}
 
-class EngineResponse(BaseModel):
-    request_id: str
-    engine_id: str
-    layer: int
-    bio: str
-    p_vector: dict
-    output: dict          # engine output payload (geometry, state, graph, etc.)
-    provenance: dict      # USAL-1.0 attribution envelope
-    proof: dict           # Merkle commitment over P-vector
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def build_provenance(engine: dict, p_vector: dict, request_id: str) -> dict:
-    """USAL-1.0 provenance envelope attached to every engine output."""
-    seed_str = json.dumps(p_vector, sort_keys=True)
-    sha256_seed = get_sha256(seed_str)
-    return {
-        "request_id": request_id,
-        "engine_id": engine["id"],
-        "engine_name": engine["name"],
-        "layer": engine["layer"],
-        "bio": engine["bio"],
-        "framework": "F=(P,E,M,R,C)",
-        "p_vector_sha256": sha256_seed,
-        "usal_1_0": "UUON-Foundation/USAL-1.0",
-        "author": "Phillip Aguilar Ruiz III / UUON Foundation Inc.",
-        "utc_timestamp": datetime.now(timezone.utc).isoformat(),
-        "upstream": engine.get("upstream"),
-        "npm": engine.get("npm"),
-    }
-
-
-def build_proof(p_vector: dict) -> dict:
-    """Deterministic Merkle commitment over sorted P-vector state."""
+def build_proof(p_vector):
     states = normalize_and_encode(p_vector)
     root, hashes = generate_merkle_chain(states)
-    return {
-        "algorithm": "CLOUUD_DETERMINISTIC_MERKLE",
-        "proof_version": "CLOUUD-CORE-1.0",
-        "merkle_root": root,
-        "state_count": len(states),
-        "hashes": hashes,
-    }
+    return {"algorithm": "CLOUUD_DETERMINISTIC_MERKLE", "proof_version": "CLOUUD-CORE-1.0",
+            "merkle_root": root, "state_count": len(states), "hashes": hashes}
 
+def _run_phyllotaxis(p_vector, width, height):
+    try:
+        r = subprocess.run([_NODE_BIN, str(_SEED_RUNNER), json.dumps(p_vector), str(width), str(height)],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip())
+        data = json.loads(r.stdout)
+        full = len(data.get("field", []))
+        data["field_sample"] = data.pop("field", [])[:100]
+        data["field_total_count"] = full
+        data["type"] = "seed_geometry"
+        data["engine"] = "seed.js — real F=(P,E,M,R,C)"
+        return data
+    except Exception as e:
+        return {"error": str(e), "type": "seed_envelope"}
 
-def compute_engine_output(engine: dict, p_vector: dict, output_format: str) -> dict:
-    """
-    Deterministic computation from P-vector.
-
-    For engines currently browser-only (WFE, PSE), this layer returns a
-    structured seed envelope — the output terminals are defined and the
-    provenance chain is anchored, but the render itself runs client-side.
-
-    As each engine's api/lib module is extracted (per WFE roadmap), this
-    function will call the real computation.
-    """
-    engine_id = engine["id"]
-
-    if engine_id == "phyllotaxis-seed":
-        import math
-        p = p_vector
-        seeds = p.get("seeds", 4000)
-        arms = p.get("arms", 13)
-        twist = p.get("twist", 0.68)
-        spread = p.get("spread", 3.4)
-        radius = p.get("radius", 4.2)
-
-        # Golden angle — Law I: Irrational Packing
-        golden_angle = math.pi * (3.0 - math.sqrt(5.0))
-        effective_angle = golden_angle * twist if twist else golden_angle
-
-        # Compute first N seed positions (lightweight server-side sample)
-        sample = min(seeds, 50)
-        points = []
-        for i in range(sample):
-            r = spread * math.sqrt(i / seeds) * radius
-            theta = i * effective_angle
-            points.append({
-                "i": i,
-                "x": round(r * math.cos(theta), 6),
-                "y": round(r * math.sin(theta), 6),
-                "arm": i % arms,
-            })
-
-        return {
-            "type": "seed_geometry",
-            "seed_count": seeds,
-            "golden_angle_rad": round(golden_angle, 10),
-            "effective_angle_rad": round(effective_angle, 10),
-            "sample_points": points,
-            "render_target": "canvas2d",
-            "full_render": engine["upstream"],
-        }
-
-    elif engine_id == "pythagorean-graph":
-        import math
-
-        def build_tree(depth, angle_l, angle_r, ratio, x=0, y=0, length=1.0, angle=90.0):
-            if depth == 0:
-                return []
-            rad = math.radians(angle)
-            x2 = x + length * math.cos(rad)
-            y2 = y + length * math.sin(rad)
-            edges = [{"from": [round(x, 4), round(y, 4)], "to": [round(x2, 4), round(y2, 4)], "depth": depth}]
-            if depth > 1:
-                edges += build_tree(depth - 1, angle_l, angle_r, ratio, x2, y2, length * ratio, angle + angle_l)
-                edges += build_tree(depth - 1, angle_l, angle_r, ratio, x2, y2, length * ratio, angle - angle_r)
-            return edges
-
-        p = p_vector
-        depth = min(p.get("depth", 7), 8)  # cap at 8 server-side for perf
-        edges = build_tree(
-            depth,
-            p.get("angle_left", 45.0),
-            p.get("angle_right", 45.0),
-            p.get("ratio", 0.707),
-        )
-        return {
-            "type": "graph_topology",
-            "edge_count": len(edges),
-            "node_count": len(edges) + 1,
-            "depth": depth,
-            "edges": edges,
-        }
-
-    elif engine_id == "boundary-state":
-        bits = p_vector.get("bits", 4)
-        dims = p_vector.get("dimensions", 2)
-        n_states = 2 ** bits
-        import math
-        # Shannon entropy for uniform distribution
-        h = math.log2(n_states) if n_states > 1 else 0.0
-        # Gray code for first 16
-        gray_codes = [i ^ (i >> 1) for i in range(min(n_states, 16))]
-        return {
-            "type": "state_field",
-            "n_states": n_states,
-            "dimensions": dims,
-            "bits": bits,
-            "shannon_H": round(h, 6),
-            "boltzmann_S": round(h * 1.380649e-23, 30),
-            "gray_codes": gray_codes,
-            "renderer": p_vector.get("renderer", "hypercube"),
-        }
-
-    elif engine_id == "propagation":
-        import random, math
-        mode = p_vector.get("mode", "neural")
-        nodes = min(p_vector.get("nodes", 100), 200)
-        threshold = p_vector.get("threshold", 0.55)
-        # Documented equilibrium at ~62% with canonical parameters
-        equilibrium_pct = 62.0 if (
-            abs(threshold - 0.55) < 0.05 and
-            abs(p_vector.get("transfer", 0.40) - 0.40) < 0.05 and
-            abs(p_vector.get("decay", 0.08) - 0.08) < 0.05
-        ) else round(random.uniform(30, 75), 2)
-        return {
-            "type": "network_state",
-            "mode": mode,
-            "nodes": nodes,
-            "equilibrium_activation_pct": equilibrium_pct,
-            "threshold": threshold,
-            "academic_record": "Reentrant excitation producing stable ~62% equilibrium — ACADEMIC-RECORD.md",
-            "stream_available": True,
-            "ws_endpoint": engine["ws_endpoint"],
-        }
-
+def compute_engine_output(engine, p_vector, output_format, width=800, height=800):
+    import math, random
+    eid = engine["id"]
+    if eid == "phyllotaxis-seed":
+        return _run_phyllotaxis(p_vector, width, height)
+    elif eid == "pythagorean-graph":
+        def tree(d, al, ar, ratio, x=0, y=0, l=1.0, a=90.0):
+            if d == 0: return []
+            import math as m
+            r = m.radians(a)
+            x2, y2 = x + l*m.cos(r), y + l*m.sin(r)
+            e = [{"from":[round(x,4),round(y,4)],"to":[round(x2,4),round(y2,4)],"depth":d}]
+            if d > 1:
+                e += tree(d-1,al,ar,ratio,x2,y2,l*ratio,a+al)
+                e += tree(d-1,al,ar,ratio,x2,y2,l*ratio,a-ar)
+            return e
+        depth = min(p_vector.get("depth",7),8)
+        edges = tree(depth,p_vector.get("angle_left",45.0),p_vector.get("angle_right",45.0),p_vector.get("ratio",0.707))
+        return {"type":"graph_topology","edge_count":len(edges),"node_count":len(edges)+1,"depth":depth,"edges":edges}
+    elif eid == "boundary-state":
+        bits = p_vector.get("bits",4)
+        n = 2**bits
+        h = math.log2(n) if n > 1 else 0.0
+        return {"type":"state_field","n_states":n,"dimensions":p_vector.get("dimensions",2),"bits":bits,
+                "shannon_H":round(h,6),"boltzmann_S":round(h*1.380649e-23,30),
+                "gray_codes":[i^(i>>1) for i in range(min(n,16))],"renderer":p_vector.get("renderer","hypercube")}
+    elif eid == "propagation":
+        t,tr,d = p_vector.get("threshold",0.55),p_vector.get("transfer",0.40),p_vector.get("decay",0.08)
+        eq = 62.0 if (abs(t-0.55)<0.05 and abs(tr-0.40)<0.05 and abs(d-0.08)<0.05) else round(random.uniform(30,75),2)
+        return {"type":"network_state","mode":p_vector.get("mode","neural"),"nodes":min(p_vector.get("nodes",100),200),
+                "equilibrium_activation_pct":eq,"threshold":t,"stream_available":True,"ws_endpoint":engine["ws_endpoint"]}
     else:
-        # wave-field-3d and any future engine — return seed envelope
-        return {
-            "type": "seed_envelope",
-            "p_vector": p_vector,
-            "render_target": engine.get("upstream"),
-            "note": "Full render is browser-side. Seed envelope anchors provenance server-side.",
-        }
+        return {"type":"seed_envelope","p_vector":p_vector,"render_target":engine.get("upstream"),
+                "note":"Render is browser-side. Seed envelope anchors provenance."}
 
-
-# ── Routes ────────────────────────────────────────────────────────────────────
+async def _persist(pool, request_id, engine, p_vector, output, provenance, proof, start_ms):
+    if pool is None: return
+    import datetime as dt
+    now = dt.datetime.now(dt.timezone.utc)
+    ms  = int(time.time()*1000 - start_ms)
+    eid = engine["id"]
+    pairs = [
+        ("INSERT INTO events (event_id,event_type,payload,timestamp,status,proof_blob,purged) VALUES ($1,$2,$3,$4,$5,$6,FALSE)",
+         (request_id, f"engine_run:{eid}", json.dumps({"engine_id":eid,"p_vector":p_vector}), now, "computed", json.dumps(proof))),
+        ("INSERT INTO engine_runs (run_id,engine_id,layer,bio,p_vector,output,provenance,merkle_root,p_vector_sha256,output_format,processing_ms,status,usal_1_0,author,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT (run_id) DO NOTHING",
+         (request_id,eid,engine["layer"],engine["bio"],json.dumps(p_vector),json.dumps(output),json.dumps(provenance),proof["merkle_root"],provenance["p_vector_sha256"],"json",ms,"computed","UUON-Foundation/USAL-1.0","Phillip Aguilar Ruiz III / UUON Foundation Inc.",now)),
+        ("INSERT INTO provenance_chain (artifact_id,artifact_type,engine_id,layer,bio,framework,p_vector,p_vector_sha256,merkle_root,usal_1_0,author,utc_timestamp,upstream_url,npm_package,proof) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT (artifact_id) DO NOTHING",
+         (request_id,"engine_run",eid,engine["layer"],engine["bio"],"F=(P,E,M,R,C)",json.dumps(p_vector),provenance["p_vector_sha256"],proof["merkle_root"],"UUON-Foundation/USAL-1.0","Phillip Aguilar Ruiz III / UUON Foundation Inc.",now,engine.get("upstream"),engine.get("npm"),json.dumps(proof))),
+        ("UPDATE engine_registry SET call_count=call_count+1, last_called=$1 WHERE engine_id=$2",
+         (now, eid)),
+    ]
+    for sql, args in pairs:
+        try:
+            await pool.execute(sql, *args)
+        except Exception:
+            pass
 
 @router.get("/engines")
 async def list_all_engines():
-    """List all registered UUON engines with terminal descriptions."""
-    return {
-        "framework": "F=(P,E,M,R,C)",
-        "license": "USAL-1.0",
-        "author": "Phillip Aguilar Ruiz III / UUON Foundation Inc.",
-        "engines": list_engines(),
-    }
-
+    return {"framework":"F=(P,E,M,R,C)","license":"USAL-1.0",
+            "author":"Phillip Aguilar Ruiz III / UUON Foundation Inc.","engines":list_engines()}
 
 @router.get("/engines/{engine_id}")
 async def describe_engine(engine_id: str):
-    """Full schema for one engine: input terminal, output terminal, auth, streaming."""
     engine = get_engine(engine_id)
     if not engine:
         raise HTTPException(status_code=404, detail=f"Engine '{engine_id}' not registered.")
     return engine
 
-
 @router.post("/engines/{engine_id}")
-async def run_engine(
-    engine_id: str,
-    req: EngineRequest,
-    api_key: str = Depends(core.verify_api_key),
-):
-    """
-    Submit a P-vector to an engine.
-    Returns: output + USAL-1.0 provenance envelope + Merkle proof of P-vector.
-    """
+async def run_engine(engine_id: str, req: EngineRequest, api_key: str = Depends(core.verify_api_key)):
     engine = get_engine(engine_id)
     if not engine:
         raise HTTPException(status_code=404, detail=f"Engine '{engine_id}' not registered.")
-
     if engine["auth"] == "IP":
-        raise HTTPException(status_code=403, detail="This engine is USAL-1.0 IP-protected. Access requires explicit licensing.")
-
+        raise HTTPException(status_code=403, detail="USAL-1.0 IP-protected.")
     request_id = str(uuid.uuid4())
-    p_vector = req.p_vector
-
-    output = compute_engine_output(engine, p_vector, req.output_format)
-    provenance = build_provenance(engine, p_vector, request_id)
-    proof = build_proof(p_vector)
-
-    # Persist to events table for audit trail
-    if core.pool is not None:
-        import datetime as dt
-        await core.pool.execute(
-            "INSERT INTO events (event_id, event_type, payload, timestamp, status, proof_blob, purged) VALUES ($1, $2, $3, $4, $5, $6, FALSE)",
-            request_id,
-            f"engine_run:{engine_id}",
-            json.dumps({"engine_id": engine_id, "p_vector": p_vector, "output_format": req.output_format}),
-            dt.datetime.now(dt.timezone.utc),
-            "computed",
-            json.dumps(proof),
-        )
-
-    return {
-        "request_id": request_id,
-        "engine_id": engine_id,
-        "layer": engine["layer"],
-        "bio": engine["bio"],
-        "p_vector": p_vector,
-        "output": output,
-        "provenance": provenance,
-        "proof": proof,
-    }
+    start_ms   = time.time() * 1000
+    output     = compute_engine_output(engine, req.p_vector, req.output_format, req.width, req.height)
+    provenance = build_provenance(engine, req.p_vector, request_id)
+    proof      = build_proof(req.p_vector)
+    await _persist(core.pool, request_id, engine, req.p_vector, output, provenance, proof, start_ms)
+    return {"request_id":request_id,"engine_id":engine_id,"layer":engine["layer"],"bio":engine["bio"],
+            "p_vector":req.p_vector,"output":output,"provenance":provenance,"proof":proof}
