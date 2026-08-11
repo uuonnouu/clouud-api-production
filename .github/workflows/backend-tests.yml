@@ -56,9 +56,8 @@ jobs:
         run: pip install -r backend/requirements.txt
 
       - name: Boot the API against real Postgres
-        working-directory: backend
         run: |
-          uvicorn server:app --host 0.0.0.0 --port 8000 &
+          python -m uvicorn backend.server:app --host 0.0.0.0 --port 8000 &
           for i in $(seq 1 20); do
             curl -sf http://localhost:8000/api/v1/health && break
             sleep 1
