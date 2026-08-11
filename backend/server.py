@@ -199,7 +199,7 @@ async def ingest_event(req: EventRequest, api_key: str = Depends(verify_api_key)
     created_at = datetime.now(timezone.utc)
     await pool.execute(
         "INSERT INTO events (event_id, event_type, payload, timestamp, status, proof_blob, purged) VALUES ($1, $2, $3, $4, $5, $6, FALSE)",
-        event_id, req.event_type, req.payload, created_at, "ingested", None,
+        event_id, req.event_type, json.dumps(req.payload), created_at, "ingested", None,
     )
     return {"transaction_id": event_id, "event_id": event_id, "status": "ingested", "timestamp": created_at.isoformat()}
 
@@ -226,7 +226,11 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
     compressed_size = len(json.dumps(proof_blob))
     compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > compressed_size else 0.0
     proof_blob["compression_ratio"] = compression_ratio
-    await pool.execute("UPDATE events SET proof_blob = $1 WHERE event_id = $2", proof_blob, event_id)
+    await pool.execute(
+        "UPDATE events SET proof_blob = $1 WHERE event_id = $2",
+        json.dumps(proof_blob),
+        event_id,
+    )
     processing_time_ms = round((time.time() - start_time) * 1000, 2)
     return {"transaction_id": event_id, "event_id": event_id, "proof": proof_blob, "proof_size": compressed_size, "original_size": original_size, "compression_ratio": compression_ratio, "states": states, "hashes": hashes, "merkle_root": root_hash, "processing_time_ms": processing_time_ms}
 
@@ -267,7 +271,11 @@ async def verify_proof(req: VerifyRequest) -> dict:
 
 @app.post("/api/v1/tamper")
 async def tamper_event(req: TamperRequest, admin_key: str = Depends(verify_admin_key)) -> dict:
-    result = await pool.execute("UPDATE events SET payload = $1, purged = FALSE WHERE event_id = $2 AND purged = FALSE", req.tampered_payload, req.event_id)
+    result = await pool.execute(
+        "UPDATE events SET payload = $1, purged = FALSE WHERE event_id = $2 AND purged = FALSE",
+        json.dumps(req.tampered_payload),
+        req.event_id,
+    )
     return {"status": "tampered", "modified_count": 1 if result == "UPDATE 1" else 0}
 
 
