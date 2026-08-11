@@ -14,16 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, model_validator
 import logging
 
-# All shared auth/db state (DATABASE_URL, ADMIN_KEY, pool, get_sha256,
-# verify_api_key, verify_admin_key) lives in .core. The compression/artifacts
-# routers under .api also depend on .core rather than on this module, so
-# there's no import cycle between server.py and the routers it mounts.
 from . import core
 from .core import DATABASE_URL, ADMIN_KEY, get_sha256, verify_api_key, verify_admin_key
 
 pool: Optional[asyncpg.pool.Pool] = None
 
-# Debug logger for local development troubleshooting. Remove or lower level in production.
 logger = logging.getLogger("clouud.debug")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
@@ -36,10 +31,9 @@ if not logger.handlers:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global pool
-    # Log the DATABASE_URL seen by the running process (for debugging only).
     logger.debug("lifespan startup: DATABASE_URL=%s", os.environ.get("DATABASE_URL"))
     pool = await asyncpg.create_pool(DATABASE_URL)
-    core.pool = pool  # keep the shared module's pool reference in sync
+    core.pool = pool
     logger.debug("Created asyncpg pool: %r", pool)
     async with pool.acquire() as connection:
         await init_db(connection)
@@ -86,17 +80,14 @@ def generate_merkle_chain(states: list):
 
 
 async def init_db(connection: asyncpg.Connection):
-    await connection.execute(
-        """
+    await connection.execute("""
         CREATE TABLE IF NOT EXISTS api_keys (
             key TEXT PRIMARY KEY,
             created_at TIMESTAMPTZ NOT NULL,
             revoked BOOLEAN NOT NULL DEFAULT FALSE
         )
-        """
-    )
-    await connection.execute(
-        """
+    """)
+    await connection.execute("""
         CREATE TABLE IF NOT EXISTS events (
             event_id TEXT PRIMARY KEY,
             event_type TEXT,
@@ -106,10 +97,8 @@ async def init_db(connection: asyncpg.Connection):
             proof_blob JSONB,
             purged BOOLEAN NOT NULL DEFAULT FALSE
         )
-        """
-    )
-    await connection.execute(
-        """
+    """)
+    await connection.execute("""
         CREATE TABLE IF NOT EXISTS tokens (
             token_id TEXT PRIMARY KEY,
             event_id TEXT REFERENCES events(event_id) ON DELETE CASCADE,
@@ -117,8 +106,7 @@ async def init_db(connection: asyncpg.Connection):
             compression_ratio REAL,
             created_at TIMESTAMPTZ NOT NULL
         )
-        """
-    )
+    """)
 
 
 async def retention_worker() -> None:
@@ -132,12 +120,6 @@ async def retention_worker() -> None:
         except Exception as e:
             logger.exception("Retention worker error: %s", e)
         await asyncio.sleep(3600)
-
-
-
-
-# verify_api_key / verify_admin_key come from .core (imported above) so the
-# compression/artifacts routers share the exact same auth logic and pool.
 
 
 class EventRequest(BaseModel):
@@ -172,38 +154,30 @@ class TokenizeRequest(BaseModel):
     event_id: str
 
 
-# Compression / artifact routers depend back on verify_api_key and pool
-# above, so they're imported and mounted only after both exist.
-from .api import compression_router, artifacts_router  # noqa: E402
+from .api import compression_router, artifacts_router, provenance_router  # noqa: E402
 
 app.include_router(compression_router, prefix="/api/v1", tags=["compression"])
 app.include_router(artifacts_router, prefix="/api/v1", tags=["artifacts"])
+app.include_router(provenance_router, prefix="/api/v1", tags=["provenance"])
 
-# UUON Engine layer — REST router + WebSocket streaming + OpenAPI manifest
-from .engines.router import router as engine_router                # noqa: E402
-from .engines.openapi_manifest import router as manifest_router    # noqa: E402
-from .engines.socket import engine_websocket                       # noqa: E402
+from .engines.router import router as engine_router
+from .engines.openapi_manifest import router as manifest_router
+from .engines.socket import engine_websocket
 
 app.include_router(engine_router, prefix="/api/v1", tags=["engines"])
 app.include_router(manifest_router, prefix="/api/v1", tags=["plugin"])
 
-# WebSocket routes — one per engine, all share the same handler
-from fastapi import WebSocket  # noqa: E402
-from .engines.registry import ENGINES  # noqa: E402
+from fastapi import WebSocket
+from .engines.registry import ENGINES
 
 for _eid in ENGINES:
-    # FastAPI doesn't support dynamic websocket_route in a loop directly,
-    # so we register each path explicitly using a closure.
     def _make_ws_handler(eid: str):
         async def _handler(websocket: WebSocket):
             await engine_websocket(websocket, eid)
         _handler.__name__ = f"ws_engine_{eid.replace('-', '_')}"
         return _handler
 
-    app.add_api_websocket_route(
-        f"/ws/engines/{_eid}",
-        _make_ws_handler(_eid),
-    )
+    app.add_api_websocket_route(f"/ws/engines/{_eid}", _make_ws_handler(_eid))
 
 
 @app.get("/api/v1/health")
@@ -215,11 +189,7 @@ async def health_check() -> dict:
 async def create_api_key(admin_key: str = Depends(verify_admin_key)) -> dict:
     key = "cld_" + str(uuid.uuid4()).replace("-", "")
     created_at = datetime.now(timezone.utc)
-    await pool.execute(
-        "INSERT INTO api_keys (key, created_at, revoked) VALUES ($1, $2, FALSE)",
-        key,
-        created_at,
-    )
+    await pool.execute("INSERT INTO api_keys (key, created_at, revoked) VALUES ($1, $2, FALSE)", key, created_at)
     return {"api_key": key, "created_at": created_at.isoformat()}
 
 
@@ -229,19 +199,9 @@ async def ingest_event(req: EventRequest, api_key: str = Depends(verify_api_key)
     created_at = datetime.now(timezone.utc)
     await pool.execute(
         "INSERT INTO events (event_id, event_type, payload, timestamp, status, proof_blob, purged) VALUES ($1, $2, $3, $4, $5, $6, FALSE)",
-        event_id,
-        req.event_type,
-        req.payload,
-        created_at,
-        "ingested",
-        None,
+        event_id, req.event_type, req.payload, created_at, "ingested", None,
     )
-    return {
-        "transaction_id": event_id,
-        "event_id": event_id,
-        "status": "ingested",
-        "timestamp": created_at.isoformat(),
-    }
+    return {"transaction_id": event_id, "event_id": event_id, "status": "ingested", "timestamp": created_at.isoformat()}
 
 
 @app.post("/api/v1/proof")
@@ -259,34 +219,16 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
     payload_str = json.dumps(payload, sort_keys=True)
     original_size = len(payload_str)
     proof_blob = {
-        "proof_version": "CLOUUD-CORE-1.0",
-        "event_id": event_id,
-        "algorithm": "CLOUUD_DETERMINISTIC_MERKLE",
-        "merkle_root": root_hash,
-        "state_count": len(states),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "proof_version": "CLOUUD-CORE-1.0", "event_id": event_id,
+        "algorithm": "CLOUUD_DETERMINISTIC_MERKLE", "merkle_root": root_hash,
+        "state_count": len(states), "created_at": datetime.now(timezone.utc).isoformat(),
     }
     compressed_size = len(json.dumps(proof_blob))
     compression_ratio = round(1 - (compressed_size / original_size), 6) if original_size > compressed_size else 0.0
     proof_blob["compression_ratio"] = compression_ratio
-    await pool.execute(
-        "UPDATE events SET proof_blob = $1 WHERE event_id = $2",
-        proof_blob,
-        event_id,
-    )
+    await pool.execute("UPDATE events SET proof_blob = $1 WHERE event_id = $2", proof_blob, event_id)
     processing_time_ms = round((time.time() - start_time) * 1000, 2)
-    return {
-        "transaction_id": event_id,
-        "event_id": event_id,
-        "proof": proof_blob,
-        "proof_size": compressed_size,
-        "original_size": original_size,
-        "compression_ratio": compression_ratio,
-        "states": states,
-        "hashes": hashes,
-        "merkle_root": root_hash,
-        "processing_time_ms": processing_time_ms,
-    }
+    return {"transaction_id": event_id, "event_id": event_id, "proof": proof_blob, "proof_size": compressed_size, "original_size": original_size, "compression_ratio": compression_ratio, "states": states, "hashes": hashes, "merkle_root": root_hash, "processing_time_ms": processing_time_ms}
 
 
 @app.post("/api/v1/tokenize")
@@ -295,21 +237,8 @@ async def tokenize_event(req: TokenizeRequest, api_key: str = Depends(verify_api
     if not ev or not ev["proof_blob"]:
         raise HTTPException(status_code=400, detail="Proof must be generated before tokenizing")
     token_id = f"CLOUUD-DATA-{get_sha256(req.event_id)[:8].upper()}"
-    token_doc = {
-        "token_id": token_id,
-        "event_id": req.event_id,
-        "merkle_root": ev["proof_blob"]["merkle_root"],
-        "compression_ratio": ev["proof_blob"]["compression_ratio"],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await pool.execute(
-        "INSERT INTO tokens (token_id, event_id, merkle_root, compression_ratio, created_at) VALUES ($1, $2, $3, $4, $5)",
-        token_doc["token_id"],
-        req.event_id,
-        token_doc["merkle_root"],
-        token_doc["compression_ratio"],
-        datetime.fromisoformat(token_doc["created_at"]),
-    )
+    token_doc = {"token_id": token_id, "event_id": req.event_id, "merkle_root": ev["proof_blob"]["merkle_root"], "compression_ratio": ev["proof_blob"]["compression_ratio"], "created_at": datetime.now(timezone.utc).isoformat()}
+    await pool.execute("INSERT INTO tokens (token_id, event_id, merkle_root, compression_ratio, created_at) VALUES ($1, $2, $3, $4, $5)", token_doc["token_id"], req.event_id, token_doc["merkle_root"], token_doc["compression_ratio"], datetime.fromisoformat(token_doc["created_at"]))
     return {"status": "minted", "token_id": token_id, "token_metadata": token_doc}
 
 
@@ -333,28 +262,16 @@ async def verify_proof(req: VerifyRequest) -> dict:
     provided_root = proof.get("merkle_root")
     is_valid = recalculated_root == provided_root
     verification_time_ms = round((time.time() - start_time) * 1000, 2)
-    return {
-        "valid": is_valid,
-        "commitment_match": is_valid,
-        "recalculated_root": recalculated_root,
-        "provided_root": provided_root,
-        "verification_time_ms": verification_time_ms,
-    }
+    return {"valid": is_valid, "commitment_match": is_valid, "recalculated_root": recalculated_root, "provided_root": provided_root, "verification_time_ms": verification_time_ms}
 
 
 @app.post("/api/v1/tamper")
 async def tamper_event(req: TamperRequest, admin_key: str = Depends(verify_admin_key)) -> dict:
-    result = await pool.execute(
-        "UPDATE events SET payload = $1, purged = FALSE WHERE event_id = $2 AND purged = FALSE",
-        req.tampered_payload,
-        req.event_id,
-    )
+    result = await pool.execute("UPDATE events SET payload = $1, purged = FALSE WHERE event_id = $2 AND purged = FALSE", req.tampered_payload, req.event_id)
     return {"status": "tampered", "modified_count": 1 if result == "UPDATE 1" else 0}
 
 
 @app.post("/api/v1/admin/trigger-retention")
 async def trigger_retention(admin_key: str = Depends(verify_admin_key)) -> dict:
-    result = await pool.execute(
-        "UPDATE events SET payload = NULL, purged = TRUE WHERE payload IS NOT NULL AND purged = FALSE"
-    )
+    result = await pool.execute("UPDATE events SET payload = NULL, purged = TRUE WHERE payload IS NOT NULL AND purged = FALSE")
     return {"status": "success", "result": result}
