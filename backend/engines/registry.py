@@ -72,7 +72,7 @@ ENGINES = {
         "endpoint": "/api/v1/engines/phyllotaxis-seed",
         "ws_endpoint": "/ws/engines/phyllotaxis-seed",
         "upstream": "https://uuon-foundation.github.io/phyllotaxis-seed-engine/",
-        "npm": "@uuon-foundation/phyllotaxis-seed-engine@1.0.0",
+        "npm": "@uuon-foundation/phyllotaxis-seed-engine@2.0.0",
         "auth": "PUBLIC",
     },
 

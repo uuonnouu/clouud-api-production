@@ -14,7 +14,7 @@ from ..compression.crypto import get_sha256, normalize_and_encode, generate_merk
 from .registry import ENGINES, get_engine, list_engines
 
 _ENGINES_DIR = Path(__file__).parent
-_SEED_RUNNER = _ENGINES_DIR / "run_seed.js"
+_SEED_RUNNER = _ENGINES_DIR / "run_seed.cjs"
 _NODE_BIN    = shutil.which("node") or shutil.which("nodejs") or "node"
 
 router = APIRouter()
@@ -111,7 +111,11 @@ async def _persist(pool, request_id, engine, p_vector, output, provenance, proof
         try:
             await pool.execute(sql, *args)
         except Exception:
-            pass
+            import logging
+            logging.getLogger("clouud.engine").exception(
+                "engine persistence failed"
+            )
+            raise
 
 @router.get("/engines")
 async def list_all_engines():
