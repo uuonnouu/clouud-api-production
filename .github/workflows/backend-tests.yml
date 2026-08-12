@@ -66,30 +66,88 @@ jobs:
 
       - name: Exercise real API flow (admin key -> issue key -> ingest -> proof -> verify -> compress -> download)
         run: |
-          set -e
-          API_KEY=$(curl -sf -H "X-Admin-Key: ci-admin-key" http://localhost:8000/api/v1/api-keys | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
+          set -euo pipefail
 
-          EVENT=$(curl -sf -X POST http://localhost:8000/api/v1/events \
-            -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-            -d '{"event_type": "ci_smoke", "payload": {"hello": "world"}}')
-          EVENT_ID=$(echo "$EVENT" | python3 -c "import sys,json; print(json.load(sys.stdin)['event_id'])")
+          echo "=== ISSUE API KEY ==="
+          KEY_RESPONSE=$(curl -sS -w '\nHTTP_STATUS=%{http_code}\n' \
+            -H "X-Admin-Key: ci-admin-key" \
+            http://localhost:8000/api/v1/api-keys)
+          echo "$KEY_RESPONSE"
 
-          PROOF=$(curl -sf -X POST http://localhost:8000/api/v1/proof \
-            -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-            -d "{\"event_id\": \"$EVENT_ID\"}")
-          echo "$PROOF" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['merkle_root']; print('proof ok:', d['merkle_root'])"
+          KEY_STATUS=$(echo "$KEY_RESPONSE" | sed -n 's/^HTTP_STATUS=//p')
+          test "$KEY_STATUS" = "200"
 
-          VERIFY=$(curl -sf -X POST http://localhost:8000/api/v1/verify \
+          API_KEY=$(echo "$KEY_RESPONSE" | sed '/^HTTP_STATUS=/d' |
+            python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
+
+          echo "=== INGEST ==="
+          EVENT_RESPONSE=$(curl -sS -w '\nHTTP_STATUS=%{http_code}\n' \
+            -X POST http://localhost:8000/api/v1/events \
+            -H "X-API-Key: $API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"event_id\": \"$EVENT_ID\", \"proof\": $(echo $PROOF | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)["proof"]))')}")
-          echo "$VERIFY" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['valid'] is True, d"
+            -d '{"event_type":"ci_smoke","payload":{"hello":"world"}}')
+          echo "$EVENT_RESPONSE"
 
-          echo '{"sample": "data", "n": 12345}' > /tmp/sample.json
-          COMPRESS=$(curl -sf -X POST http://localhost:8000/api/v1/compress \
-            -H "X-API-Key: $API_KEY" -F "file=@/tmp/sample.json")
-          ARTIFACT_ID=$(echo "$COMPRESS" | python3 -c "import sys,json; print(json.load(sys.stdin)['artifact_id'])")
+          EVENT_STATUS=$(echo "$EVENT_RESPONSE" | sed -n 's/^HTTP_STATUS=//p')
+          test "$EVENT_STATUS" = "200"
+
+          EVENT=$(echo "$EVENT_RESPONSE" | sed '/^HTTP_STATUS=/d')
+          EVENT_ID=$(echo "$EVENT" |
+            python3 -c "import sys,json; print(json.load(sys.stdin)['event_id'])")
+
+          echo "=== PROOF ==="
+          PROOF_RESPONSE=$(curl -sS -w '\nHTTP_STATUS=%{http_code}\n' \
+            -X POST http://localhost:8000/api/v1/proof \
+            -H "X-API-Key: $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"event_id\":\"$EVENT_ID\"}")
+          echo "$PROOF_RESPONSE"
+
+          PROOF_STATUS=$(echo "$PROOF_RESPONSE" | sed -n 's/^HTTP_STATUS=//p')
+          test "$PROOF_STATUS" = "200"
+
+          PROOF=$(echo "$PROOF_RESPONSE" | sed '/^HTTP_STATUS=/d')
+          echo "$PROOF" |
+            python3 -c "import sys,json; d=json.load(sys.stdin); assert d['merkle_root']; print('proof ok:', d['merkle_root'])"
+
+          echo "=== VERIFY ==="
+          VERIFY_RESPONSE=$(curl -sS -w '\nHTTP_STATUS=%{http_code}\n' \
+            -X POST http://localhost:8000/api/v1/verify \
+            -H "Content-Type: application/json" \
+            -d "{\"event_id\":\"$EVENT_ID\",\"proof\":$(echo "$PROOF" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)["proof"]))')}")
+          echo "$VERIFY_RESPONSE"
+
+          VERIFY_STATUS=$(echo "$VERIFY_RESPONSE" | sed -n 's/^HTTP_STATUS=//p')
+          test "$VERIFY_STATUS" = "200"
+
+          VERIFY=$(echo "$VERIFY_RESPONSE" | sed '/^HTTP_STATUS=/d')
+          echo "$VERIFY" |
+            python3 -c "import sys,json; d=json.load(sys.stdin); assert d['valid'] is True, d"
+
+          echo "=== COMPRESS ==="
+          echo '{"sample":"data","n":12345}' > /tmp/sample.json
+
+          COMPRESS_RESPONSE=$(curl -sS -w '\nHTTP_STATUS=%{http_code}\n' \
+            -X POST http://localhost:8000/api/v1/compress \
+            -H "X-API-Key: $API_KEY" \
+            -F "file=@/tmp/sample.json")
+          echo "$COMPRESS_RESPONSE"
+
+          COMPRESS_STATUS=$(echo "$COMPRESS_RESPONSE" | sed -n 's/^HTTP_STATUS=//p')
+          test "$COMPRESS_STATUS" = "200"
+
+          COMPRESS=$(echo "$COMPRESS_RESPONSE" | sed '/^HTTP_STATUS=/d')
+          ARTIFACT_ID=$(echo "$COMPRESS" |
+            python3 -c "import sys,json; print(json.load(sys.stdin)['artifact_id'])")
           echo "compress ok: $ARTIFACT_ID"
 
-          curl -sf -H "X-API-Key: $API_KEY" -o /tmp/downloaded.bin \
-            "http://localhost:8000/api/v1/artifacts/$ARTIFACT_ID"
+          echo "=== DOWNLOAD ==="
+          DOWNLOAD_STATUS=$(curl -sS -w '%{http_code}' -o /tmp/downloaded.bin \
+            -H "X-API-Key: $API_KEY" \
+            "http://localhost:8000/api/v1/artifacts/$ARTIFACT_ID")
+          echo "HTTP_STATUS=$DOWNLOAD_STATUS"
+
+          test "$DOWNLOAD_STATUS" = "200"
+          test -s /tmp/downloaded.bin
+
           echo "download ok, bytes: $(wc -c < /tmp/downloaded.bin)"
