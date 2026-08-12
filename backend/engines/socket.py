@@ -106,6 +106,7 @@ def _tick_propagation(p_vector: dict, tick: int) -> dict:
     Simulates one propagation tick on a small synthetic network.
     Returns activation fraction — converges toward equilibrium.
     """
+    import hashlib
     import random
     threshold = p_vector.get("threshold", 0.55)
     transfer = p_vector.get("transfer", 0.40)
@@ -113,7 +114,16 @@ def _tick_propagation(p_vector: dict, tick: int) -> dict:
     # Sigmoid convergence toward documented ~62% equilibrium
     target = 0.62
     activation = target * (1 - math.exp(-tick * transfer * 0.1))
-    activation += random.gauss(0, 0.01)  # biological noise
+    seed_material = json.dumps(
+        {"p_vector": p_vector, "tick": tick},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    seed = int.from_bytes(
+        hashlib.sha256(seed_material).digest()[:8],
+        "big",
+    )
+    activation += random.Random(seed).gauss(0, 0.01)
     activation = max(0.0, min(1.0, activation))
     return {
         "tick": tick,
