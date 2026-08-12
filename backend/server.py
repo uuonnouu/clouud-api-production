@@ -23,6 +23,29 @@ from .core import DATABASE_URL, ADMIN_KEY, get_sha256, verify_api_key, verify_ad
 
 pool: Optional[asyncpg.pool.Pool] = None
 
+
+def encode_jsonb(value):
+    """Encode native JSON values while preserving existing JSON strings."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+async def init_connection(connection: asyncpg.Connection) -> None:
+    """Normalize PostgreSQL JSON/JSONB values at the asyncpg boundary."""
+    await connection.set_type_codec(
+        "json",
+        schema="pg_catalog",
+        encoder=encode_jsonb,
+        decoder=json.loads,
+    )
+    await connection.set_type_codec(
+        "jsonb",
+        schema="pg_catalog",
+        encoder=encode_jsonb,
+        decoder=json.loads,
+    )
+
 # Debug logger for local development troubleshooting. Remove or lower level in production.
 logger = logging.getLogger("clouud.debug")
 logger.setLevel(logging.DEBUG)
@@ -38,7 +61,7 @@ async def lifespan(app: FastAPI):
     global pool
     # Log the DATABASE_URL seen by the running process (for debugging only).
     logger.debug("lifespan startup: DATABASE_URL=%s", os.environ.get("DATABASE_URL"))
-    pool = await asyncpg.create_pool(DATABASE_URL)
+    pool = await asyncpg.create_pool(DATABASE_URL, init=init_connection)
     core.pool = pool  # keep the shared module's pool reference in sync
     logger.debug("Created asyncpg pool: %r", pool)
     async with pool.acquire() as connection:
