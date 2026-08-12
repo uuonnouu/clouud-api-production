@@ -19,6 +19,30 @@ from .core import DATABASE_URL, ADMIN_KEY, get_sha256, verify_api_key, verify_ad
 
 pool: Optional[asyncpg.pool.Pool] = None
 
+def encode_jsonb(value):
+    """Encode native JSON values while preserving existing JSON strings."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+async def init_connection(connection: asyncpg.Connection) -> None:
+    """Normalize PostgreSQL JSON/JSONB values at the asyncpg boundary."""
+    await connection.set_type_codec(
+        "json",
+        schema="pg_catalog",
+        encoder=encode_jsonb,
+        decoder=json.loads,
+        format="text",
+    )
+    await connection.set_type_codec(
+        "jsonb",
+        schema="pg_catalog",
+        encoder=encode_jsonb,
+        decoder=json.loads,
+        format="text",
+    )
+
 logger = logging.getLogger("clouud.debug")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
@@ -32,7 +56,10 @@ if not logger.handlers:
 async def lifespan(app: FastAPI):
     global pool
     logger.debug("lifespan startup: DATABASE_URL=%s", os.environ.get("DATABASE_URL"))
-    pool = await asyncpg.create_pool(DATABASE_URL)
+    pool = await asyncpg.create_pool(
+        DATABASE_URL,
+        init=init_connection,
+    )
     core.pool = pool
     logger.debug("Created asyncpg pool: %r", pool)
     async with pool.acquire() as connection:
@@ -67,13 +94,6 @@ def normalize_and_encode(payload: dict) -> list:
     if not states:
         states = ["STATE_TRANSITION|empty|null"]
     return states
-
-
-def decode_jsonb(value):
-    """Decode asyncpg's default JSON/JSONB string representation."""
-    if isinstance(value, str):
-        return json.loads(value)
-    return value
 
 
 def generate_merkle_chain(states: list):
@@ -219,7 +239,7 @@ async def generate_proof(req: ProofRequest, api_key: str = Depends(verify_api_ke
         raise HTTPException(status_code=404, detail="Event not found")
     if ev["purged"]:
         raise HTTPException(status_code=400, detail="Cannot generate proof for purged payload")
-    payload = decode_jsonb(ev["payload"]) or {}
+    payload = ev["payload"] or {}
     start_time = time.time()
     states = normalize_and_encode(payload)
     root_hash, hashes = generate_merkle_chain(states)
@@ -248,7 +268,7 @@ async def tokenize_event(req: TokenizeRequest, api_key: str = Depends(verify_api
     if not ev or not ev["proof_blob"]:
         raise HTTPException(status_code=400, detail="Proof must be generated before tokenizing")
     token_id = f"CLOUUD-DATA-{get_sha256(req.event_id)[:8].upper()}"
-    proof_blob = decode_jsonb(ev["proof_blob"]) or {}
+    proof_blob = ev["proof_blob"] or {}
     token_doc = {"token_id": token_id, "event_id": req.event_id, "merkle_root": proof_blob["merkle_root"], "compression_ratio": proof_blob["compression_ratio"], "created_at": datetime.now(timezone.utc).isoformat()}
     await pool.execute("INSERT INTO tokens (token_id, event_id, merkle_root, compression_ratio, created_at) VALUES ($1, $2, $3, $4, $5)", token_doc["token_id"], req.event_id, token_doc["merkle_root"], token_doc["compression_ratio"], datetime.fromisoformat(token_doc["created_at"]))
     return {"status": "minted", "token_id": token_id, "token_metadata": token_doc}
@@ -262,7 +282,7 @@ async def verify_proof(req: VerifyRequest) -> dict:
     ev = await pool.fetchrow("SELECT event_id, payload, purged FROM events WHERE event_id = $1", event_id)
     if not ev:
         return {"valid": False, "reason": "Event not found"}
-    payload_to_verify = decode_jsonb(ev["payload"])
+    payload_to_verify = ev["payload"]
     if ev["purged"]:
         if not raw_payload:
             return {"valid": False, "reason": "Payload purged. Provide raw_payload to verify."}
